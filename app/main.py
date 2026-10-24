@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.catalogo import router as catalogo_router
 from app.db import pool
 
 
@@ -15,6 +16,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GHOSH · Inventario y pedidos", version="0.1.0", lifespan=lifespan)
+
+app.include_router(catalogo_router)
 
 
 @app.get("/health", tags=["sistema"])
