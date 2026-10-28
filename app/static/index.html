@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12211e">
+  <title>GHOSH · Inventario</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20261027-4">
+  <script src="/static/app.js?v=20261027-4" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="GHOSH, inicio">
+        <span class="brand-mark">G</span>
+        <span><strong>GHOSH</strong><small>Control de inventario</small></span>
+      </a>
+      <div class="nav-caption">OPERACIÓN</div>
+      <nav class="main-nav" aria-label="Secciones principales">
+        <button class="nav-item active" data-view="catalog-view" type="button">
+          <span class="nav-icon">▦</span><span>Catálogo</span>
+        </button>
+        <button class="nav-item" data-view="sales-view" type="button">
+          <span class="nav-icon">▤</span><span>Nota de venta</span>
+        </button>
+        <button class="nav-item" data-view="receipt-view" type="button">
+          <span class="nav-icon">＋</span><span>Recepción</span>
+        </button>
+        <button class="nav-item" data-view="movement-view" type="button">
+          <span class="nav-icon">↕</span><span>Movimientos</span>
+        </button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-note"><span class="note-dot"></span><span>Inventario en línea</span></div>
+        <small>GHOSH · Región del Maule</small>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div class="breadcrumbs"><span>GHOSH</span><span class="crumb-separator">/</span><strong id="section-breadcrumb">Catálogo</strong></div>
+        <div class="api-status" id="api-status"><span class="status-dot"></span><span>Conectando</span></div>
+      </header>
+
+      <section class="view active" id="catalog-view">
+        <div class="page-intro">
+          <div>
+            <div class="eyebrow">GESTIÓN DE PRODUCTOS</div>
+            <h1>Catálogo</h1>
+            <p>Consulta códigos, pesos, empaques, precios y stock actual.</p>
+          </div>
+          <div class="intro-icon" aria-hidden="true">▦</div>
+        </div>
+
+        <div class="summary-row">
+          <article class="summary-card">
+            <div class="summary-label">Productos encontrados</div>
+            <div class="summary-value" id="product-total">—</div>
+            <div class="summary-foot">Coincidencias para tu búsqueda</div>
+          </article>
+          <article class="summary-card summary-card-accent">
+            <div class="summary-label">Información de precios</div>
+            <div class="summary-value summary-text">Lista de precios</div>
+            <div class="summary-foot">Precio unitario y precio con IVA por artículo</div>
+          </article>
+        </div>
+
+        <form class="filter-panel catalog-filter-panel" id="catalog-filter">
+          <label class="search-field">
+            <span class="field-label">Buscar producto</span>
+            <span class="input-wrap"><span class="search-icon" aria-hidden="true">⌕</span><input id="catalog-query" type="search" placeholder="Artículo o código I/B" autocomplete="off"></span>
+          </label>
+          <button class="button button-primary" type="submit">Buscar <span aria-hidden="true">→</span></button>
+          <button class="button button-quiet" id="catalog-clear" type="button">Limpiar</button>
+        </form>
+
+        <div class="form-result" id="catalog-action-result" role="status" aria-live="polite" hidden></div>
+        <section class="data-card" aria-labelledby="catalog-table-heading">
+          <div class="data-card-heading">
+            <div><h2 id="catalog-table-heading">Productos</h2><p id="catalog-result-caption">Cargando catálogo…</p></div>
+            <div class="catalog-heading-actions">
+              <button class="button button-quiet" id="catalog-inactive-toggle" type="button" aria-pressed="false">Mostrar retirados</button>
+              <button class="button button-quiet catalog-refresh-button" id="catalog-refresh" type="button" title="Actualizar productos" aria-label="Actualizar catálogo"><span aria-hidden="true">↻</span> Actualizar</button>
+              <span class="table-tag">CATÁLOGO</span>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table class="catalog-table">
+              <thead><tr><th>Código I</th><th>Código B</th><th>Artículo</th><th>Peso</th><th>Unidad x caja</th><th>Stock</th><th>Precio x unidad</th><th>Precio con IVA</th><th>Acción</th></tr></thead>
+              <tbody id="catalog-rows"><tr><td class="table-message" colspan="9">Cargando productos…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="table-footer">
+            <span id="catalog-page-label">—</span>
+            <div class="pagination"><button class="page-button" id="catalog-prev" type="button" aria-label="Página anterior">←</button><button class="page-button" id="catalog-next" type="button" aria-label="Página siguiente">→</button></div>
+          </div>
+        </section>
+      </section>
+
+      <section class="view" id="receipt-view" hidden>
+        <div class="page-intro">
+          <div>
+            <div class="eyebrow">ENTRADA DE INVENTARIO</div>
+            <h1>Recepción</h1>
+            <p>Registra mercadería por lote y deja el movimiento trazado.</p>
+          </div>
+          <div class="intro-icon intro-icon-receipt" aria-hidden="true">＋</div>
+        </div>
+
+        <div class="receipt-mode-switch" role="tablist" aria-label="Modo de recepción">
+          <button class="mode-button active" data-receipt-mode="single" type="button" role="tab" aria-selected="true">Individual</button>
+          <button class="mode-button" data-receipt-mode="bulk" type="button" role="tab" aria-selected="false">Carga masiva CSV</button>
+        </div>
+
+        <section class="receipt-panel active" id="single-receipt-panel">
+          <div class="receipt-panel-heading"><div><h2>Registrar un lote</h2><p>Completa los datos de la mercadería recibida.</p></div><span class="table-tag">UNA RECEPCIÓN</span></div>
+          <form id="receipt-single-form" class="receipt-form">
+            <label><span class="field-label">Bodega</span><select id="receipt-single-warehouse" required><option value="">Cargando bodegas…</option></select></label>
+            <label><span class="field-label">Registrado por</span><select id="receipt-single-operator" required><option value="">Cargando operadores…</option></select></label>
+            <label><span class="field-label">Código I del producto</span><input id="receipt-sku" list="receipt-product-options" placeholder="Ej. TKA311001901" required maxlength="40"><datalist id="receipt-product-options"></datalist></label>
+            <label><span class="field-label">Código de lote</span><input id="receipt-lot" placeholder="Ej. L-ATUN-NUEVO" required maxlength="40"></label>
+            <label><span class="field-label">Cantidad recibida</span><input id="receipt-quantity" type="number" min="0.001" step="0.001" placeholder="0" required></label>
+            <label><span class="field-label">Fecha de vencimiento <span class="optional-label">cuando corresponda</span></span><input id="receipt-expiration" type="date"></label>
+            <label class="form-wide"><span class="field-label">Motivo o referencia</span><input id="receipt-reason" maxlength="200" placeholder="Ej. Recepción de proveedor"></label>
+            <div class="form-wide form-actions"><p class="form-hint">Los productos con trazabilidad requieren fecha de vencimiento. Si vuelves a recibir el mismo lote, la fecha debe coincidir.</p><button class="button button-primary" type="submit">Registrar recepción <span aria-hidden="true">→</span></button></div>
+          </form>
+          <div class="form-result" id="receipt-single-result" role="status" aria-live="polite" hidden></div>
+        </section>
+
+        <section class="receipt-panel" id="bulk-receipt-panel" hidden>
+          <div class="receipt-panel-heading"><div><h2>Importar recepciones</h2><p>Carga varias filas con un CSV o transforma una lista de precios Excel.</p></div><span class="table-tag">CSV · XLSX</span></div>
+          <div class="bulk-format-switch" role="tablist" aria-label="Formato de carga masiva">
+            <button class="format-button active" data-bulk-format="csv" type="button" role="tab" aria-selected="true">CSV estructurado</button>
+            <button class="format-button" data-bulk-format="excel" type="button" role="tab" aria-selected="false">Lista de precios Excel</button>
+          </div>
+
+          <form id="receipt-bulk-form" class="receipt-form bulk-form">
+            <label><span class="field-label">Bodega para estas filas</span><select id="receipt-bulk-warehouse" required><option value="">Cargando bodegas…</option></select></label>
+            <label><span class="field-label">Registrado por</span><select id="receipt-bulk-operator" required><option value="">Cargando operadores…</option></select></label>
+            <div class="form-wide upload-section">
+              <div class="upload-heading"><div><span class="field-label">Archivo CSV</span><p>Columnas: <code>sku</code>, <code>codigo_lote</code>, <code>cantidad</code>; fecha y motivo son opcionales. Para crear productos que aún no existen, usa la pestaña Lista de precios Excel.</p></div><button class="button button-quiet" id="bulk-template" type="button">Descargar plantilla <span aria-hidden="true">↓</span></button></div>
+              <label class="upload-zone" for="receipt-csv-file"><span class="upload-icon">↑</span><span><strong>Elige un CSV para cargar</strong><small>UTF-8 · separado por coma o punto y coma · máximo 5 MiB</small></span><input id="receipt-csv-file" type="file" accept=".csv,text/csv" required></label>
+              <div class="file-preview" id="receipt-file-preview" hidden></div>
+            </div>
+            <div class="form-wide form-actions"><p class="form-hint">La carga es atómica: si alguna fila falla, no se registra ninguna. Combina en una fila las cantidades repetidas del mismo producto y lote.</p><button class="button button-primary" id="receipt-bulk-submit" type="submit" disabled>Validar y registrar <span aria-hidden="true">→</span></button></div>
+          </form>
+
+          <form id="receipt-excel-form" class="receipt-form bulk-form" hidden>
+            <label><span class="field-label">Bodega para estas filas</span><select id="receipt-excel-warehouse" required><option value="">Cargando bodegas…</option></select></label>
+            <label><span class="field-label">Registrado por</span><select id="receipt-excel-operator" required><option value="">Cargando operadores…</option></select></label>
+            <div class="form-wide upload-section">
+              <div class="upload-heading"><div><span class="field-label">Lista de precios Excel</span><p>Se busca la tabla con <code>ARTICULO</code>, código y <code>UNIDAD X CAJA</code>.</p></div></div>
+              <label class="upload-zone" for="receipt-excel-file"><span class="upload-icon">↑</span><span><strong>Elige una planilla .xlsx</strong><small>Máximo 5 MiB · se analizará antes de registrar</small></span><input id="receipt-excel-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
+              <div class="excel-controls">
+                <label><span class="field-label">Hoja con los artículos</span><select id="receipt-excel-sheet" disabled required><option value="">Primero selecciona un Excel</option></select></label>
+                <label><span class="field-label">Vencimiento común <span class="optional-label">si aplica</span></span><input id="receipt-excel-expiration" type="date"><small class="control-hint">Obligatorio si algún producto requiere trazabilidad y la planilla no trae la fecha.</small></label>
+              </div>
+              <div class="file-preview excel-preview" id="receipt-excel-preview" hidden>
+                <div class="excel-preview-summary" id="receipt-excel-summary"></div>
+                <div class="table-scroll">
+                  <table class="excel-preview-table">
+                    <thead><tr><th>Fila</th><th>Código I</th><th>Artículo</th><th>Unidades iniciales</th><th>Lote generado</th><th>Vencimiento</th><th>Estado</th></tr></thead>
+                    <tbody id="receipt-excel-rows"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <label class="form-wide excel-confirm"><input id="receipt-excel-lot-confirm" type="checkbox" required><span>Confirmo que la lista no trae lotes reales y acepto generar códigos internos para esta recepción.</span></label>
+            <div class="form-wide form-hint excel-note">El archivo no contiene lotes. Se creará un código interno por artículo y fila, visible en el historial. Esto no sustituye el lote real del proveedor. La cantidad recibida será exactamente <strong>una caja</strong>, según <strong>UNIDAD X CAJA</strong>. Los artículos existentes suman stock. Si no existe el Código I, se crea el producto con ARTICULO, PESO, UNIDAD X CAJA y PRECIO X UNIDAD; Código B es opcional. Los nuevos se crean en Lista de precios, como unidad y sin trazabilidad activada.</div>
+            <div class="form-wide form-actions"><p class="form-hint">Revisaremos las filas antes de guardar. Si hay un dato inválido, no se registrará ninguna recepción.</p><button class="button button-primary" id="receipt-excel-submit" type="submit" disabled>Crear y recibir artículos <span aria-hidden="true">→</span></button></div>
+          </form>
+          <div class="form-result" id="receipt-bulk-result" role="status" aria-live="polite" hidden></div>
+          <div class="form-result" id="receipt-excel-result" role="status" aria-live="polite" hidden></div>
+        </section>
+      </section>
+      <section class="view" id="sales-view" hidden>
+        <div class="page-intro">
+          <div>
+            <div class="eyebrow">VENTA DE MOSTRADOR</div>
+            <h1>Nota de venta</h1>
+            <p>Arma una nota con cajas completas, productos sueltos o ambas opciones.</p>
+          </div>
+          <div class="intro-icon intro-icon-sales" aria-hidden="true">▤</div>
+        </div>
+
+        <section class="sales-panel">
+          <div class="sales-meta">
+            <label><span class="field-label">Vendedor</span><select id="sale-seller" required><option value="">Cargando vendedores…</option></select></label>
+            <label><span class="field-label">Bodega de salida</span><select id="sale-warehouse" required><option value="">Cargando bodegas…</option></select></label>
+          </div>
+          <form class="sales-filter" id="sale-filter">
+            <label class="search-field"><span class="field-label">Buscar producto</span><span class="input-wrap"><span class="search-icon" aria-hidden="true">⌕</span><input id="sale-query" type="search" placeholder="Artículo o código I/B" autocomplete="off"></span></label>
+            <label><span class="field-label">Categoría</span><select id="sale-category"><option value="">Todas las categorías</option></select></label>
+            <button class="button button-primary" type="submit">Buscar</button>
+            <button class="button button-quiet" id="sale-clear-filter" type="button">Limpiar</button>
+          </form>
+
+          <section class="data-card" aria-labelledby="sale-products-heading">
+            <div class="data-card-heading">
+              <div><h2 id="sale-products-heading">Catálogo para esta venta</h2><p id="sale-catalog-caption">Selecciona cantidades por producto.</p></div>
+              <span class="table-tag">CAJAS Y SUELTOS</span>
+            </div>
+            <div class="table-scroll">
+              <table class="sale-products-table">
+                <thead><tr><th>Producto</th><th>Precio unitario</th><th>Disponible</th><th>Capacidad</th><th>Cajas</th><th>Sueltos</th></tr></thead>
+                <tbody id="sale-product-rows"><tr><td class="table-message" colspan="6">Cargando productos…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="table-footer">
+              <span id="sale-page-label">—</span>
+              <div class="pagination"><button class="page-button" id="sale-prev" type="button" aria-label="Página anterior">←</button><button class="page-button" id="sale-next" type="button" aria-label="Página siguiente">→</button></div>
+            </div>
+          </section>
+
+          <section class="data-card sale-summary-card" aria-labelledby="sale-summary-heading">
+            <div class="data-card-heading">
+              <div><h2 id="sale-summary-heading">Sumario pre venta</h2><p>Solo aparecen los productos con cantidades seleccionadas.</p></div>
+              <span class="table-tag" id="sale-line-count">0 PRODUCTOS</span>
+            </div>
+            <div class="table-scroll">
+              <table class="sale-summary-table">
+                <thead><tr><th>Producto</th><th>Cajas</th><th>Sueltos</th><th>Cantidad total</th><th>Subtotal</th><th></th></tr></thead>
+                <tbody id="sale-summary-rows"><tr><td class="table-message" colspan="6">Agrega productos desde el catálogo.</td></tr></tbody>
+              </table>
+            </div>
+            <div class="sale-total-row"><span>Total nota</span><strong id="sale-total">$0</strong></div>
+            <div class="sale-actions">
+              <p class="form-hint">Al registrar la nota se descuenta el inventario de la bodega seleccionada y se registra cada salida en Movimientos.</p>
+              <button class="button button-primary" id="sale-submit" type="button" disabled>Registrar nota de venta <span aria-hidden="true">→</span></button>
+            </div>
+          </section>
+          <div class="form-result" id="sale-result" role="status" aria-live="polite" hidden></div>
+          <button class="button button-quiet sale-print-button" id="sale-print-button" type="button" hidden>Imprimir nota</button>
+          <section class="printable-note" id="sale-print" hidden></section>
+        </section>
+      </section>
+
+      <section class="view" id="movement-view" hidden>
+        <div class="page-intro">
+          <div>
+            <div class="eyebrow">TRAZABILIDAD DE INVENTARIO</div>
+            <h1>Movimientos</h1>
+            <p>Historial auditable de recepciones, reservas, despachos y ajustes.</p>
+          </div>
+          <div class="intro-icon intro-icon-history" aria-hidden="true">↕</div>
+        </div>
+        <form class="filter-panel movement-filters" id="movement-filter">
+          <label class="search-field"><span class="field-label">Código I</span><span class="input-wrap"><input id="movement-sku" type="search" placeholder="Ej. TKA311001901"></span></label>
+          <label class="search-field"><span class="field-label">Código de lote</span><span class="input-wrap"><input id="movement-lot" type="search" placeholder="Ej. L-LEC-A"></span></label>
+          <button class="button button-primary" type="submit">Filtrar <span aria-hidden="true">→</span></button>
+          <button class="button button-quiet" id="movement-clear" type="button">Limpiar</button>
+        </form>
+        <section class="data-card" aria-labelledby="movement-table-heading">
+          <div class="data-card-heading">
+            <div><h2 id="movement-table-heading">Historial de movimientos</h2><p id="movement-result-caption">Cargando movimientos…</p></div>
+            <span class="table-tag">AUDITORÍA</span>
+          </div>
+          <div class="table-scroll">
+            <table class="movement-table">
+              <thead><tr><th>Fecha</th><th>Movimiento</th><th>Producto / lote</th><th>Cantidad</th><th>Usuario</th><th>Motivo</th><th>Pedido / nota de venta</th></tr></thead>
+              <tbody id="movement-rows"><tr><td class="table-message" colspan="7">Cargando movimientos…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="table-footer">
+            <span id="movement-page-label">—</span>
+            <div class="pagination"><button class="page-button" id="movement-prev" type="button" aria-label="Página anterior">←</button><button class="page-button" id="movement-next" type="button" aria-label="Página siguiente">→</button></div>
+          </div>
+        </section>
+      </section>
+      <footer class="page-footer"><span>GHOSH · Sistema de inventario</span><span>Disponibilidad sujeta a confirmación de la venta</span></footer>
+    </main>
+  </div>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+

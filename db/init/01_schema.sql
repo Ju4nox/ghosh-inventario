@@ -47,24 +47,31 @@ CREATE TABLE usuario (
     nombre        VARCHAR(100) NOT NULL,
     correo        VARCHAR(120) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    activo        BOOLEAN NOT NULL DEFAULT TRUE
+    activo               BOOLEAN NOT NULL DEFAULT TRUE,
+    eliminado            BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- ---------- Productos y lotes ----------
 CREATE TABLE producto (
     id_producto          SERIAL PRIMARY KEY,
-    sku                  VARCHAR(40)  NOT NULL UNIQUE,
+    sku                  VARCHAR(40)  NOT NULL,
+    codigo_b             VARCHAR(20),
     nombre               VARCHAR(120) NOT NULL,
+    peso                 NUMERIC(12,4) NOT NULL CHECK (peso >= 0),
     id_categoria         INTEGER NOT NULL REFERENCES categoria(id_categoria),
     id_unidad            INTEGER NOT NULL REFERENCES unidad_comercial(id_unidad),
     precio_vigente       NUMERIC(12,2) NOT NULL CHECK (precio_vigente >= 0),
+    unidades_por_caja    INTEGER NOT NULL DEFAULT 5 CHECK (unidades_por_caja > 0),
     requiere_trazabilidad BOOLEAN NOT NULL DEFAULT FALSE,
     umbral_stock_critico NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (umbral_stock_critico >= 0),
-    activo               BOOLEAN NOT NULL DEFAULT TRUE
+    activo               BOOLEAN NOT NULL DEFAULT TRUE,
+    eliminado            BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX idx_producto_nombre_trgm ON producto USING gin (nombre gin_trgm_ops);
 CREATE INDEX idx_producto_sku_trgm    ON producto USING gin (sku gin_trgm_ops);
 CREATE INDEX idx_producto_categoria   ON producto (id_categoria);
+CREATE UNIQUE INDEX uq_producto_sku_catalogo ON producto (sku) WHERE eliminado = FALSE;
+CREATE UNIQUE INDEX uq_producto_codigo_b_catalogo ON producto (codigo_b) WHERE eliminado = FALSE AND codigo_b IS NOT NULL;
 
 CREATE TABLE lote (
     id_lote          SERIAL PRIMARY KEY,
@@ -107,6 +114,29 @@ CREATE TABLE reserva (
 );
 CREATE INDEX idx_reserva_lote ON reserva (id_lote);
 
+-- ---------- Notas de venta ----------
+CREATE TABLE nota_venta (
+    id_nota_venta SERIAL PRIMARY KEY,
+    id_vendedor   INTEGER NOT NULL REFERENCES usuario(id_usuario),
+    id_bodega     INTEGER NOT NULL REFERENCES bodega(id_bodega),
+    fecha_creacion TIMESTAMP NOT NULL DEFAULT NOW(),
+    total         NUMERIC(14,2) NOT NULL CHECK (total >= 0)
+);
+
+CREATE TABLE detalle_nota_venta (
+    id_detalle_nota_venta SERIAL PRIMARY KEY,
+    id_nota_venta         INTEGER NOT NULL REFERENCES nota_venta(id_nota_venta) ON DELETE CASCADE,
+    id_producto           INTEGER NOT NULL REFERENCES producto(id_producto),
+    cajas                 INTEGER NOT NULL DEFAULT 0 CHECK (cajas >= 0),
+    sueltos               NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (sueltos >= 0),
+    unidades_por_caja     INTEGER NOT NULL CHECK (unidades_por_caja > 0),
+    cantidad_total        NUMERIC(12,3) NOT NULL CHECK (cantidad_total > 0),
+    precio_confirmado     NUMERIC(12,2) NOT NULL CHECK (precio_confirmado >= 0),
+    subtotal              NUMERIC(14,2) NOT NULL CHECK (subtotal >= 0),
+    UNIQUE (id_nota_venta, id_producto),
+    CHECK (cantidad_total = cajas * unidades_por_caja + sueltos)
+);
+
 -- ---------- Movimientos auditables ----------
 CREATE TABLE movimiento_inventario (
     id_movimiento SERIAL PRIMARY KEY,
@@ -114,8 +144,12 @@ CREATE TABLE movimiento_inventario (
     id_tipo       INTEGER NOT NULL REFERENCES tipo_movimiento(id_tipo),
     id_usuario    INTEGER NOT NULL REFERENCES usuario(id_usuario),
     id_pedido     INTEGER REFERENCES pedido(id_pedido),  -- opcional: solo cuando aplica
+    id_nota_venta INTEGER REFERENCES nota_venta(id_nota_venta),
     cantidad      NUMERIC(12,3) NOT NULL,
     fecha         TIMESTAMP NOT NULL DEFAULT NOW(),
     motivo        VARCHAR(200) NOT NULL
 );
 CREATE INDEX idx_mov_lote ON movimiento_inventario (id_lote, fecha);
+
+
+
