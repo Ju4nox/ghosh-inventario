@@ -1,0 +1,10 @@
+app/__init__.py
+app/catalog.py
+app/db.py
+app/inventory.py
+app/main.py
+app/receipt_excel.py
+app/sales.py
+app/static/app.js
+app/static/index.html
+app/static/styles.css
