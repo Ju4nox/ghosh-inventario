@@ -1,0 +1,14 @@
+# Dependencias y compilados de Angular
+/node_modules
+/dist
+/out-tsc
+/.angular
+
+# Registros
+npm-debug.log*
+yarn-error.log*
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store

@@ -189,7 +189,7 @@ async function loadCatalog() {
 function formatDate(value) {
   if (!value) return "—";
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("es-CL", { dateStyle: "medium", timeStyle: "short" }).format(date);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("es-CL", { dateStyle: "medium", timeStyle: "short", timeZone: "America/Santiago" }).format(date);
 }
 
 function renderMovements(items) {
@@ -438,10 +438,12 @@ function renderExcelReceiptPreview(data) {
   const body = byId("receipt-excel-rows");
   const items = data.items || [];
   const errors = data.errors || [];
+  const omitted = data.omitted_rows || [];
+  const repeatedIdentifiers = omitted.filter((item) => ["duplicate_identifier_in_file", "duplicate_barcode_in_file"].includes(item.code));
   preview.hidden = false;
   summary.textContent = "Hoja " + (data.selected_sheet || "—") + " · " +
     quantityFormat.format(data.valid_rows || 0) + " de " + quantityFormat.format(data.total_rows || 0) +
-    " filas listas · " + items.filter((item) => item.producto_nuevo).length + " productos nuevos detectados · lote interno XLS-" + (data.batch_ref || "—");
+    " filas listas · " + omitted.length + " omitidas por identificador ausente o repetido · " + items.filter((item) => item.producto_nuevo && item.status !== "omitted").length + " productos nuevos detectados · lote interno XLS-" + (data.batch_ref || "—");
   const visibleItems = items.slice(0, 30);
   if (!visibleItems.length) {
     showTableMessage(body, 7, "No hay filas que mostrar.");
@@ -458,8 +460,8 @@ function renderExcelReceiptPreview(data) {
       );
       const stateCell = document.createElement("td");
       const badge = document.createElement("span");
-      badge.className = "excel-state" + (item.status === "error" ? " error" : item.status === "new" ? " new" : "");
-      badge.textContent = item.status === "error" ? "Revisar" : item.status === "new" ? "Se creará" : "Existente";
+      badge.className = "excel-state" + (item.status === "error" ? " error" : item.status === "new" ? " new" : item.status === "omitted" ? " omitted" : "");
+      badge.textContent = item.status === "error" ? "Revisar" : item.status === "new" ? "Se creará" : item.status === "omitted" ? "Omitido" : "Existente";
       stateCell.append(badge);
       row.append(stateCell);
       return row;
@@ -475,7 +477,15 @@ function renderExcelReceiptPreview(data) {
       false,
       errors.length + " error" + (errors.length === 1 ? "" : "es") + " en la planilla",
       "No se ha registrado inventario. Corrige estas filas y vuelve a analizar.",
-      errors
+      errors.concat(repeatedIdentifiers)
+    );
+  } else if (omitted.length) {
+    showReceiptResult(
+      "receipt-excel-result",
+      true,
+      "Vista previa lista con filas omitidas",
+      omitted.length + " fila" + (omitted.length === 1 ? " omitida" : "s omitidas") + " por identificadores ausentes, repetidos o no únicos. Las demás filas identificadas sí pueden recibirse.",
+      repeatedIdentifiers
     );
   } else {
     showReceiptResult(
@@ -579,14 +589,17 @@ async function submitExcelReceipt(event) {
     });
     const data = await response.json();
     if (!response.ok) {
-      showReceiptResult("receipt-excel-result", false, "No se registró ninguna fila", "Corrige los errores indicados y vuelve a analizar.", data.errors || []);
+      const omittedDetails = Array.isArray(data.omitted_details) ? data.omitted_details : Array.isArray(data.omitted_rows) ? data.omitted_rows : [];
+      const repeatedIdentifiers = omittedDetails.filter((item) => ["duplicate_identifier_in_file", "duplicate_barcode_in_file"].includes(item.code));
+      showReceiptResult("receipt-excel-result", false, "No se registró ninguna fila", "Corrige los errores indicados y vuelve a analizar.", (data.errors || []).concat(repeatedIdentifiers));
       return;
     }
     showReceiptResult(
       "receipt-excel-result",
       true,
       "Recepción registrada",
-      data.created_products + " productos nuevos creados y " + data.existing_products + " existentes con stock actualizado; se registró un movimiento auditable por artículo. Referencia de lote: XLS-" + data.batch_ref + "."
+      data.created_products + " productos nuevos creados y " + data.existing_products + " existentes con stock actualizado; " + (data.omitted_rows || 0) + " filas omitidas por identificadores ausentes, repetidos o no únicos. Se registró un movimiento auditable por artículo. Referencia de lote: XLS-" + data.batch_ref + ".",
+      (data.omitted_details || []).filter((item) => ["duplicate_identifier_in_file", "duplicate_barcode_in_file"].includes(item.code))
     );
     byId("receipt-excel-form").reset();
     excelReceiptState.batchRef = null;
@@ -783,39 +796,6 @@ function showSaleResult(data) {
   const message = document.createElement("span");
   message.textContent = "Vendedor: " + data.vendedor + " · Bodega: " + data.bodega + " · Total: " + money.format(Number(data.total)) + ". El stock y los movimientos quedaron actualizados.";
   container.replaceChildren(heading, message);
-  byId("sale-print-button").hidden = false;
-
-  const receipt = byId("sale-print");
-  receipt.hidden = false;
-  receipt.replaceChildren();
-  const title = document.createElement("h1");
-  title.textContent = "Nota de venta";
-  const number = document.createElement("p");
-  number.textContent = "N.º " + data.id_nota_venta + " · " + formatDate(data.fecha_creacion);
-  const seller = document.createElement("p");
-  seller.textContent = "Vendedor: " + data.vendedor;
-  const warehouse = document.createElement("p");
-  warehouse.textContent = "Bodega: " + data.bodega;
-  const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th>Producto</th><th>Cajas</th><th>Sueltos</th><th>Cantidad</th><th>Precio unitario</th><th>Subtotal</th></tr></thead>";
-  const body = document.createElement("tbody");
-  for (const item of data.items) {
-    const row = document.createElement("tr");
-    row.append(
-      makeCell(item.nombre + " · " + item.sku),
-      makeCell(item.cajas),
-      makeCell(quantityFormat.format(Number(item.sueltos))),
-      makeCell(quantityFormat.format(Number(item.cantidad_total))),
-      makeCell(money.format(Number(item.precio_confirmado))),
-      makeCell(money.format(Number(item.subtotal))),
-    );
-    body.append(row);
-  }
-  table.append(body);
-  const total = document.createElement("h2");
-  total.className = "print-total";
-  total.textContent = "Total: " + money.format(Number(data.total));
-  receipt.append(title, number, seller, warehouse, table, total);
 }
 
 async function submitSaleNote() {
@@ -827,8 +807,6 @@ async function submitSaleNote() {
   button.disabled = true;
   button.textContent = "Registrando nota…";
   byId("sale-result").hidden = true;
-  byId("sale-print-button").hidden = true;
-  byId("sale-print").hidden = true;
   try {
     const response = await fetch("/sales/notes", {
       method: "POST",
@@ -855,10 +833,6 @@ async function submitSaleNote() {
     button.innerHTML = 'Registrar nota de venta <span aria-hidden="true">→</span>';
     renderSaleSummary();
   }
-}
-
-function printSaleNote() {
-  if (!byId("sale-print").hidden) window.print();
 }
 
 byId("sale-product-rows").addEventListener("input", (event) => {
@@ -916,7 +890,6 @@ byId("sale-warehouse").addEventListener("change", () => {
   loadSalesCatalog();
 });
 byId("sale-submit").addEventListener("click", submitSaleNote);
-byId("sale-print-button").addEventListener("click", printSaleNote);
 
 
 for (const button of document.querySelectorAll(".mode-button")) {

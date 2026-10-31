@@ -331,7 +331,7 @@ def search_catalog(conn, q: str | None = None, categoria: str | None = None,
             """SELECT DISTINCT c.nombre
                FROM categoria c
                JOIN producto p ON p.id_categoria = c.id_categoria
-               WHERE p.activo = TRUE
+               WHERE p.eliminado = FALSE AND p.activo = TRUE
                ORDER BY c.nombre"""
         )
         categories = [row[0] for row in cursor.fetchall()]

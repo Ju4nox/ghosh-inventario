@@ -146,7 +146,7 @@ CREATE TABLE movimiento_inventario (
     id_pedido     INTEGER REFERENCES pedido(id_pedido),  -- opcional: solo cuando aplica
     id_nota_venta INTEGER REFERENCES nota_venta(id_nota_venta),
     cantidad      NUMERIC(12,3) NOT NULL,
-    fecha         TIMESTAMP NOT NULL DEFAULT NOW(),
+    fecha         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     motivo        VARCHAR(200) NOT NULL
 );
 CREATE INDEX idx_mov_lote ON movimiento_inventario (id_lote, fecha);

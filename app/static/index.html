@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#12211e">
   <title>GHOSH · Inventario</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20261027-4">
-  <script src="/static/app.js?v=20261027-4" defer></script>
+  <link rel="stylesheet" href="/static/styles.css?v=20261029-5">
+  <script src="/static/app.js?v=20261029-5" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -149,7 +149,7 @@
             <label><span class="field-label">Bodega para estas filas</span><select id="receipt-excel-warehouse" required><option value="">Cargando bodegas…</option></select></label>
             <label><span class="field-label">Registrado por</span><select id="receipt-excel-operator" required><option value="">Cargando operadores…</option></select></label>
             <div class="form-wide upload-section">
-              <div class="upload-heading"><div><span class="field-label">Lista de precios Excel</span><p>Se busca la tabla con <code>ARTICULO</code>, código y <code>UNIDAD X CAJA</code>.</p></div></div>
+              <div class="upload-heading"><div><span class="field-label">Lista de precios Excel</span><p>Se busca la tabla con <code>ARTICULO</code> y <code>UNIDAD X CAJA</code>. Solo se reciben artículos con Código I o Código B único; las filas sin identificación única se omiten.</p></div></div>
               <label class="upload-zone" for="receipt-excel-file"><span class="upload-icon">↑</span><span><strong>Elige una planilla .xlsx</strong><small>Máximo 5 MiB · se analizará antes de registrar</small></span><input id="receipt-excel-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required></label>
               <div class="excel-controls">
                 <label><span class="field-label">Hoja con los artículos</span><select id="receipt-excel-sheet" disabled required><option value="">Primero selecciona un Excel</option></select></label>
@@ -166,7 +166,7 @@
               </div>
             </div>
             <label class="form-wide excel-confirm"><input id="receipt-excel-lot-confirm" type="checkbox" required><span>Confirmo que la lista no trae lotes reales y acepto generar códigos internos para esta recepción.</span></label>
-            <div class="form-wide form-hint excel-note">El archivo no contiene lotes. Se creará un código interno por artículo y fila, visible en el historial. Esto no sustituye el lote real del proveedor. La cantidad recibida será exactamente <strong>una caja</strong>, según <strong>UNIDAD X CAJA</strong>. Los artículos existentes suman stock. Si no existe el Código I, se crea el producto con ARTICULO, PESO, UNIDAD X CAJA y PRECIO X UNIDAD; Código B es opcional. Los nuevos se crean en Lista de precios, como unidad y sin trazabilidad activada.</div>
+            <div class="form-wide form-hint excel-note">El archivo no contiene lotes. Se creará un código interno por artículo y fila, visible en el historial. Esto no sustituye el lote real del proveedor. La cantidad recibida será exactamente <strong>UNIDAD X CAJA</strong>. Los decimales se redondean a la precisión admitida; para artículos nuevos, UNIDAD X CAJA se redondea a unidades enteras. Los artículos existentes suman stock. Si el Código I no existe, se crea el producto con ARTICULO, PESO, UNIDAD X CAJA y PRECIO X UNIDAD; para crearlo se requiere Código I único. Los nuevos se crean en Lista de precios, como unidad y sin trazabilidad activada.</div>
             <div class="form-wide form-actions"><p class="form-hint">Revisaremos las filas antes de guardar. Si hay un dato inválido, no se registrará ninguna recepción.</p><button class="button button-primary" id="receipt-excel-submit" type="submit" disabled>Crear y recibir artículos <span aria-hidden="true">→</span></button></div>
           </form>
           <div class="form-result" id="receipt-bulk-result" role="status" aria-live="polite" hidden></div>
@@ -230,8 +230,6 @@
             </div>
           </section>
           <div class="form-result" id="sale-result" role="status" aria-live="polite" hidden></div>
-          <button class="button button-quiet sale-print-button" id="sale-print-button" type="button" hidden>Imprimir nota</button>
-          <section class="printable-note" id="sale-print" hidden></section>
         </section>
       </section>
 

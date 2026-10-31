@@ -137,13 +137,15 @@ def _as_quantity(value) -> Decimal:
         raise ValueError("UNIDAD X CAJA debe contener una cantidad numérica.") from exc
     if not quantity.is_finite() or quantity <= 0:
         raise ValueError("UNIDAD X CAJA debe ser mayor que cero.")
-    normalized = quantity.normalize()
-    if len(normalized.as_tuple().digits) > 12 or max(0, -normalized.as_tuple().exponent) > 3:
-        raise ValueError("La cantidad supera la precisión máxima de 12 dígitos y 3 decimales.")
-    return quantity
+    if quantity >= Decimal("1000000000"):
+        raise ValueError("UNIDAD X CAJA supera el máximo permitido.")
+    rounded = quantity.quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+    if rounded <= 0:
+        raise ValueError("UNIDAD X CAJA debe ser mayor que cero después del redondeo.")
+    return rounded
 
 
-def _resolve_product(raw, products_by_sku, products_by_barcode, products_by_name):
+def _resolve_product(raw, products_by_sku, products_by_barcode):
     code_i, code_b, name = (_cell_text(raw.get(key)) for key in ("codigo_i", "codigo_b", "nombre"))
     if code_i:
         product = products_by_sku.get(code_i.casefold())
@@ -156,12 +158,7 @@ def _resolve_product(raw, products_by_sku, products_by_barcode, products_by_name
         if not product:
             return None, _error(raw["row"], "codigo_i", "new_product_requires_code_i", "Para crear un artículo nuevo, la planilla debe incluir su Código I.")
         return product, None
-    matches = products_by_name.get(_normalized_text(name), [])
-    if len(matches) == 1:
-        return matches[0], None
-    if len(matches) > 1:
-        return None, _error(raw["row"], "articulo", "ambiguous_product", f"El artículo '{name}' coincide con más de un producto. Completa su Código I en la planilla.")
-    return None, _error(raw["row"], "codigo_i", "missing_product_code", f"El artículo '{name or '(sin nombre)'}' no tiene código y no se encontró una coincidencia única en el catálogo.")
+    return None, _error(raw["row"], "codigo_i", "missing_unique_identifier", "Artículo omitido: necesita un Código I o Código B único para poder identificarse.")
 
 
 def _excel_decimal(value, field: str, row: int, errors: list[dict], scale: int) -> Decimal | None:
@@ -177,13 +174,14 @@ def _excel_decimal(value, field: str, row: int, errors: list[dict], scale: int) 
     if not number.is_finite() or number < 0:
         errors.append(_error(row, field, "out_of_range", "Debe ser un número finito mayor o igual a cero."))
         return None
-    if number.as_tuple().exponent < -scale:
-        errors.append(_error(row, field, "too_many_decimals", f"Admite como máximo {scale} decimales."))
-        return None
     if number >= Decimal(10) ** (12 - scale):
         errors.append(_error(row, field, "out_of_range", "El número supera la precisión permitida por el catálogo."))
         return None
-    return number
+    rounded = number.quantize(Decimal(1).scaleb(-scale), rounding=ROUND_HALF_UP)
+    if rounded >= Decimal(10) ** (12 - scale):
+        errors.append(_error(row, field, "out_of_range", "El número supera la precisión permitida por el catálogo después del redondeo."))
+        return None
+    return rounded
 
 
 def _new_product_data(raw, row: int, quantity: Decimal | None) -> tuple[dict | None, list[dict]]:
@@ -278,18 +276,28 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
             products = cursor.fetchall()
         products_by_sku = {str(row[0]).casefold(): {"sku": row[0], "codigo_b": row[1], "nombre": row[2], "requiere_trazabilidad": row[3], "activo": row[4]} for row in products}
         products_by_barcode = {str(row[1]).casefold(): {"sku": row[0], "codigo_b": row[1], "nombre": row[2], "requiere_trazabilidad": row[3], "activo": row[4]} for row in products if row[1]}
-        products_by_name = {}
-        for product in products_by_sku.values():
-            products_by_name.setdefault(_normalized_text(product["nombre"]), []).append(product)
-
         worksheet = workbook[spec["name"]]
         columns = spec["columns"]
         first_row = spec["header_row"] + 1
-        rows, preview_items, errors = [], [], []
+        source_rows = list(_table_rows(worksheet, spec["header_row"], columns))
+        identifier_occurrences = {}
+        for row_number, values in source_rows:
+            raw = {field: values[index] if index < len(values) else None for field, index in columns.items()}
+            for field in ("codigo_i", "codigo_b"):
+                code = _cell_text(raw.get(field)).casefold()
+                if code:
+                    identifier_occurrences.setdefault((field, code), []).append(row_number)
+        duplicate_identifiers = {}
+        for (field, _), row_numbers in identifier_occurrences.items():
+            if len(row_numbers) > 1:
+                for row_number in row_numbers:
+                    duplicate_identifiers.setdefault(row_number, set()).add(field)
+
+        rows, preview_items, errors, omitted_rows = [], [], [], []
         seen_skus, seen_lots, seen_barcodes = {}, {}, {}
         total_rows = 0
         has_actual_lot_column = "codigo_lote" in columns
-        for row_number, values in _table_rows(worksheet, spec["header_row"], columns):
+        for row_number, values in source_rows:
             raw = {field: values[index] if index < len(values) else None for field, index in columns.items()}
             total_rows += 1
             if total_rows > MAX_EXCEL_ROWS:
@@ -297,8 +305,36 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
                 break
             raw["row"] = row_number
             name = _cell_text(raw.get("nombre"))
+            if row_number in duplicate_identifiers:
+                fields = duplicate_identifiers[row_number]
+                label = " y ".join("Código I" if field == "codigo_i" else "Código B" for field in ("codigo_i", "codigo_b") if field in fields)
+                code_i = _cell_text(raw.get("codigo_i"))
+                code_b = _cell_text(raw.get("codigo_b"))
+                skipped = _error(row_number, next(iter(fields)), "duplicate_identifier_in_file", f"Artículo '{name or '(sin nombre)'}' omitido: {label} se repite en la planilla; Código I: {code_i or '—'}, Código B: {code_b or '—'}. Se omiten todas sus apariciones.")
+                omitted_rows.append(skipped)
+                preview_items.append({
+                    "row": row_number, "sku": _cell_text(raw.get("codigo_i")) or _cell_text(raw.get("codigo_b")),
+                    "nombre": name, "producto_nuevo": False,
+                    "cantidad": _cell_text(raw.get("unidades_por_caja")), "codigo_lote": "",
+                    "fecha_vencimiento": None, "status": "omitted", "message": skipped["message"],
+                })
+                continue
             row_errors = [] if name else [_error(row_number, "articulo", "missing_name", "Falta el nombre del artículo.")]
-            product, product_error = _resolve_product(raw, products_by_sku, products_by_barcode, products_by_name)
+            product, product_error = _resolve_product(raw, products_by_sku, products_by_barcode)
+            if product_error and product_error["code"] in {"missing_unique_identifier", "new_product_requires_code_i", "barcode_already_assigned"}:
+                omitted_rows.append(product_error)
+                preview_items.append({
+                    "row": row_number,
+                    "sku": _cell_text(raw.get("codigo_i")) or _cell_text(raw.get("codigo_b")),
+                    "nombre": name,
+                    "producto_nuevo": False,
+                    "cantidad": _cell_text(raw.get("unidades_por_caja")),
+                    "codigo_lote": "",
+                    "fecha_vencimiento": None,
+                    "status": "omitted",
+                    "message": product_error["message"],
+                })
+                continue
             new_product = None
             if product_error:
                 row_errors.append(product_error)
@@ -319,6 +355,10 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
             if product and product["requiere_trazabilidad"] and expiration is None:
                 row_errors.append(_error(row_number, "fecha_vencimiento", "expiration_required", "Este producto requiere trazabilidad; ingresa una fecha común o completa la fecha en la planilla."))
             if product is None and product_error is None:
+                if quantity is not None:
+                    quantity = quantity.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                    if quantity <= 0:
+                        row_errors.append(_error(row_number, "unidad x caja", "invalid_quantity", "UNIDAD X CAJA debe ser mayor que cero después del redondeo a unidades enteras."))
                 new_product, product_errors = _new_product_data(raw, row_number, quantity)
                 row_errors.extend(product_errors)
 
@@ -327,6 +367,7 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
             if len(lot_code) > 40:
                 row_errors.append(_error(row_number, "codigo_lote", "lot_too_long", "El código de lote admite hasta 40 caracteres."))
             candidate_sku = product["sku"] if product else new_product["sku"] if new_product else _cell_text(raw.get("codigo_i"))
+            skip_row = False
             if candidate_sku:
                 normalized_sku = candidate_sku.casefold()
                 previous_row = seen_skus.get(normalized_sku)
@@ -338,7 +379,8 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
                     barcode_key = new_product["codigo_b"].casefold()
                     previous_barcode_row = seen_barcodes.get(barcode_key)
                     if previous_barcode_row and seen_skus.get(normalized_sku) != previous_barcode_row:
-                        row_errors.append(_error(row_number, "codigo_b", "duplicate_barcode_in_file", f"El Código B también aparece en la fila {previous_barcode_row}."))
+                        omitted_rows.append(_error(row_number, "codigo_b", "duplicate_barcode_in_file", f"Artículo '{name or '(sin nombre)'}' omitido: el Código B '{new_product['codigo_b']}' también aparece en la fila {previous_barcode_row}."))
+                        skip_row = True
                     else:
                         seen_barcodes.setdefault(barcode_key, row_number)
                 lot_key = (normalized_sku, lot_code.casefold())
@@ -355,10 +397,10 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
                 "cantidad": format(quantity.normalize(), "f") if quantity is not None else "",
                 "codigo_lote": lot_code,
                 "fecha_vencimiento": expiration.isoformat() if expiration else None,
-                "status": "error" if row_errors else "new" if new_product else "ready",
+                "status": "error" if row_errors else "omitted" if skip_row else "new" if new_product else "ready",
             }
             preview_items.append(item)
-            if not row_errors and (product or new_product) and quantity is not None:
+            if not row_errors and not skip_row and (product or new_product) and quantity is not None:
                 rows.append({
                     "row": row_number,
                     "nuevo_producto": new_product,
@@ -374,7 +416,8 @@ def preview_receipt_workbook(conn, content: bytes, worksheet_name: str | None = 
             "status": "rejected" if errors else "preview",
             "sheets": public_specs, "selected_sheet": spec["name"], "batch_ref": batch_ref,
             "header_row": spec["header_row"], "total_rows": min(total_rows, MAX_EXCEL_ROWS),
-            "valid_rows": len(rows), "items": preview_items, "errors": errors, "rows": rows,
+            "valid_rows": len(rows), "omitted_rows": omitted_rows,
+            "items": preview_items, "errors": errors, "rows": rows,
         }
     finally:
         workbook.close()

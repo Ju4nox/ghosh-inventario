@@ -1,0 +1,429 @@
+/* =====================================================================
+   GHOSH · Diseño Dark Minimalista "SaaS Moderno" (Linear / Vercel / shadcn)
+   Paleta monocromática estricta:
+   - Fondo principal: #0a0a0a
+   - Superficies / tarjetas: #111111 con borde 1px #262626
+   - Texto secundario / inactivo: #a1a1aa
+   - Texto primario / activo: #fafafa
+   - Hover ítem: #171717 | Activo ítem: #1f1f1f
+   ===================================================================== */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Inter Variable", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --bg-canvas: #0a0a0a;
+  --bg-surface: #111111;
+  --bg-hover: #171717;
+  --bg-active: #1f1f1f;
+  --border-subtle: #262626;
+  --text-muted: #a1a1aa;
+  --text-primary: #fafafa;
+}
+
+/* ---------- Base ---------- */
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-tap-highlight-color: transparent;
+    font-family: var(--font-sans);
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    min-width: 320px;
+    background-color: #0a0a0a;
+    color: #fafafa;
+    font-family: var(--font-sans);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-sans);
+    letter-spacing: -0.02em;
+    color: #fafafa;
+  }
+  button {
+    cursor: pointer;
+    font-family: inherit;
+  }
+  lucide-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  lucide-icon svg {
+    stroke-width: 1.5px;
+  }
+  ::selection {
+    background: #262626;
+    color: #fafafa;
+  }
+  select option {
+    background-color: #111111;
+    color: #fafafa;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(0.65);
+    cursor: pointer;
+  }
+  input[type="number"]::-webkit-inner-spin-button {
+    opacity: 0.45;
+  }
+  :focus-visible {
+    outline: 1px solid rgba(250, 250, 250, 0.5);
+    outline-offset: 1px;
+  }
+}
+
+/* ---------- Componentes estilo shadcn/ui · Linear · Vercel ---------- */
+@layer components {
+  /* Superficie / Tarjeta principal (#111111, borde 1px #262626, radio 9px, sin sombras fuertes) */
+  .glass-panel,
+  .glass-card,
+  .saas-card {
+    background-color: #111111;
+    border: 1px solid #262626;
+    border-radius: 9px;
+    box-shadow: none;
+    transition: border-color 150ms ease, background-color 150ms ease;
+  }
+
+  /* Sub-superficie para tarjetas móviles o bloques internos */
+  .glass-subtle {
+    background-color: #0a0a0a;
+    border: 1px solid #262626;
+    border-radius: 8px;
+  }
+
+  /* ---------- Navegación Sidebar Izquierdo ---------- */
+  .sidebar-shell {
+    width: 240px;
+    background-color: #0a0a0a;
+    border-right: 1px solid rgba(255, 255, 255, 0.85);
+  }
+
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    line-height: 1.35;
+    font-weight: 400;
+    color: #a1a1aa;
+    background-color: transparent;
+    border: 0;
+    text-align: left;
+    text-decoration: none;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+  .nav-link:hover {
+    background-color: #171717;
+    color: #fafafa;
+  }
+  .nav-link-active {
+    background-color: #1f1f1f;
+    color: #fafafa;
+    font-weight: 500;
+  }
+
+  /* ---------- Formularios e Inputs ---------- */
+  .field-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #a1a1aa;
+  }
+  .glass-input {
+    width: 100%;
+    height: 36px;
+    border-radius: 6px;
+    border: 1px solid #262626;
+    background-color: #0a0a0a;
+    color: #fafafa;
+    padding: 0 12px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 150ms ease, background-color 150ms ease;
+  }
+  .glass-input::placeholder {
+    color: #a1a1aa;
+    opacity: 0.65;
+  }
+  .glass-input:hover:not(:disabled):not(:focus) {
+    border-color: #3f3f46;
+  }
+  .glass-input:focus {
+    border-color: rgba(250, 250, 250, 0.55);
+    background-color: #0a0a0a;
+  }
+  .glass-input:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .input-icon-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .input-icon {
+    position: absolute;
+    left: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #a1a1aa;
+    pointer-events: none;
+    z-index: 2;
+    line-height: 0;
+  }
+  .glass-input.has-icon,
+  .glass-input.pl-10 {
+    padding-left: 36px;
+  }
+  select.glass-input {
+    appearance: none;
+    padding-right: 34px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='15' height='15' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 11px center;
+  }
+  .qty-input {
+    width: 100%;
+    max-width: 6.5rem;
+    height: 34px;
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+  }
+  .hint {
+    font-size: 12px;
+    line-height: 1.55;
+    color: #a1a1aa;
+  }
+
+  /* ---------- Botones (Primario blanco/negro, Secundario borde gris/transparente) ---------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  /* Primario: Blanco (#fafafa) con texto negro (#0a0a0a) */
+  .btn-primary {
+    background-color: #fafafa;
+    color: #0a0a0a;
+    border-color: #fafafa;
+    font-weight: 500;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: #e4e4e7;
+    border-color: #e4e4e7;
+  }
+  /* Secundario: Borde gris (#262626) y fondo transparente */
+  .btn-ghost,
+  .btn-secondary,
+  .btn-warning,
+  .btn-success {
+    background-color: transparent;
+    color: #fafafa;
+    border-color: #262626;
+  }
+  .btn-ghost:hover:not(:disabled),
+  .btn-secondary:hover:not(:disabled),
+  .btn-warning:hover:not(:disabled),
+  .btn-success:hover:not(:disabled) {
+    background-color: #171717;
+    border-color: #3f3f46;
+    color: #fafafa;
+  }
+  /* Destructivo monocromático de alto contraste */
+  .btn-danger {
+    background-color: #171717;
+    color: #fafafa;
+    border-color: #3f3f46;
+  }
+  .btn-danger:hover:not(:disabled) {
+    background-color: #fafafa;
+    color: #0a0a0a;
+    border-color: #fafafa;
+  }
+  .btn-sm {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  .btn-icon {
+    width: 36px;
+    padding: 0;
+  }
+  .btn-sm.btn-icon {
+    width: 30px;
+  }
+  @media (pointer: coarse) {
+    .btn-sm {
+      min-height: 36px;
+    }
+    .btn-sm.btn-icon {
+      width: 36px;
+    }
+  }
+
+  /* ---------- Insignias Monocromáticas ---------- */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 6px;
+    border: 1px solid #262626;
+    background-color: #171717;
+    color: #fafafa;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.35;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .badge-emerald,
+  .badge-sky,
+  .badge-violet,
+  .badge-lime {
+    background-color: #171717;
+    border-color: #262626;
+    color: #fafafa;
+  }
+  .badge-amber,
+  .badge-orange,
+  .badge-slate {
+    background-color: #0a0a0a;
+    border-color: #262626;
+    color: #a1a1aa;
+  }
+  /* Stock crítico / alerta en monocromo de alto contraste */
+  .badge-rose {
+    background-color: #fafafa;
+    border-color: #fafafa;
+    color: #0a0a0a;
+    font-weight: 600;
+  }
+
+  /* ---------- Tablas ---------- */
+  .data-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13px;
+  }
+  .data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 10px 16px;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #a1a1aa;
+    background-color: #0a0a0a;
+    border-bottom: 1px solid #262626;
+  }
+  .data-table tbody td {
+    padding: 12px 16px;
+    vertical-align: middle;
+    color: #fafafa;
+    border-bottom: 1px solid #1f1f1f;
+  }
+  .data-table tbody tr {
+    transition: background-color 150ms ease;
+  }
+  .data-table tbody tr:hover {
+    background-color: #171717;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .num {
+    text-align: left;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- Pestañas (Segmented Control estilo shadcn) ---------- */
+  .tab-switch {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background-color: #0a0a0a;
+    border: 1px solid #262626;
+  }
+  .tab-button {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 400;
+    color: #a1a1aa;
+    transition: color 150ms ease, background-color 150ms ease;
+  }
+  .tab-button:hover {
+    color: #fafafa;
+    background-color: #171717;
+  }
+  .tab-button[aria-selected="true"] {
+    color: #fafafa;
+    background-color: #1f1f1f;
+    font-weight: 500;
+  }
+
+  /* ---------- Barra de desplazamiento ---------- */
+  .scroll-area {
+    scrollbar-width: thin;
+    scrollbar-color: #262626 transparent;
+  }
+  .scroll-area::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-area::-webkit-scrollbar-thumb {
+    background-color: #262626;
+    border-radius: 9999px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

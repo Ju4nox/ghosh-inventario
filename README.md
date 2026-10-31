@@ -8,7 +8,13 @@ Proyecto de Ingeniería de Software I (UCM). Base de datos PostgreSQL y API Fast
 2. Ejecuta `docker compose up -d`.
 3. Verifica `docker compose ps` y espera a que la base aparezca como `healthy`.
 
-El esquema (`db/init/01_schema.sql`) y los datos de prueba (`db/init/02_seed.sql`) se cargan automáticamente la primera vez que se crea el volumen.
+El esquema (`db/init/01_schema.sql`) y los datos base (`db/init/02_seed.sql`) se cargan automáticamente la primera vez que se crea el volumen. La semilla deja el catálogo vacío: no inserta productos ni lotes. Los scripts de inicialización solo se ejecutan al crear un volumen nuevo.
+
+La base de datos, la API y la interfaz usan la zona horaria `America/Santiago`. Al actualizar un volumen existente, recrea los servicios con `docker compose up -d --build` y ejecuta una vez esta migración para convertir los horarios históricos guardados como UTC a marcas de tiempo con zona:
+
+    docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/20261028_movimientos_timestamptz_chile.sql'
+
+La migración conserva el instante del movimiento; la auditoría lo presenta en hora chilena, incluidos los cambios estacionales.
 
 ## Interfaz web
 
@@ -16,19 +22,21 @@ Con los servicios levantados, abre `http://localhost:8000/`. **Catálogo** prese
 
 Las rutas `/catalog/products` y `/inventory/movements` son APIs consumidas por la interfaz.
 
-## Actualizar una base existente para eliminar artículos del catálogo
+Si la página indica **API sin conexión**, abre Docker Desktop y espera a que esté iniciado. Desde esta carpeta ejecuta `docker compose up -d --build` y luego abre `http://localhost:8000/` (no abras `app/static/index.html` directamente). Comprueba `docker compose ps`: la base debe quedar `healthy` y la API `running`. El indicador de la página consulta `/health`, que requiere que la API y PostgreSQL estén disponibles.
 
-La migración db/migrations/20261027_eliminar_catalogo.sql agrega la marca de eliminación y permite reutilizar Código I y Código B solo después de eliminar el artículo. La eliminación se ofrece para productos retirados y conserva sus lotes, movimientos y referencias históricas en PostgreSQL.
+## Actualizar una base existente y dejar vacío el catálogo
+
+Para un volumen creado con una versión anterior, `db/migrations/20261027_esquema_actual_catalogo_vacio.sql` agrega las columnas y tablas que usa la aplicación actual. Archiva los productos existentes para que el catálogo visible quede en cero, conservando productos, lotes, movimientos y ventas como historial. La migración registra esa fase y se puede volver a ejecutar sin ocultar productos agregados después.
 
 Con Docker Compose iniciado, aplícala una vez con:
 
-    docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/20261027_eliminar_catalogo.sql'
+    docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/20261027_esquema_actual_catalogo_vacio.sql'
 
 ## Crear productos durante una recepción desde Excel
 
 La opción Lista de precios Excel crea automáticamente los artículos cuyo Código I no exista y luego registra su recepción. Requiere Código I, ARTICULO, PESO, UNIDAD X CAJA y PRECIO X UNIDAD; Código B puede venir vacío. Los productos existentes no se modifican: la cantidad de una caja se suma al inventario. Los artículos nuevos usan la categoría Lista de precios, la unidad unidad y trazabilidad desactivada por defecto.
 
-En una base existente, aplica primero la migración de eliminación del catálogo si aún no está aplicada y luego db/migrations/20261027_recepcion_alta_productos.sql:
+La migración de esquema anterior deja listas las columnas e índices que requiere esta carga. Para actualizar un volumen que aún no la tiene, aplícala antes de usar la opción Excel:
 
     docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /migrations/20261027_recepcion_alta_productos.sql'
 
@@ -72,7 +80,7 @@ El importador Excel agrega openpyxl a las dependencias de la API. Para instalarl
 
 En **Nota de venta**, selecciona un vendedor activo y la bodega de salida. Ingresa por producto las cajas completas o unidades sueltas; el sumario muestra únicamente los artículos seleccionados. La capacidad por caja se toma de la lista de precios: en estos diez ejemplos es de 24 o 48 unidades, según el artículo.
 
-Al registrar la nota, el sistema valida el stock de la bodega, descuenta primero los lotes más próximos a vencer y guarda movimientos de despacho asociados a la nota. La nota y sus descuentos se confirman en una sola transacción: si falta stock para alguna línea, no se registra ninguna. Después de guardar, se puede imprimir el comprobante.
+Al registrar la nota, el sistema valida el stock de la bodega, descuenta primero los lotes más próximos a vencer y guarda movimientos de despacho asociados a la nota. La nota y sus descuentos se confirman en una sola transacción: si falta stock para alguna línea, no se registra ninguna. El registro queda disponible en la base de datos; la aplicación no genera ni guarda un archivo de comprobante.
 
 La API ofrece `GET /sales/options` para listar vendedores y bodegas, y `POST /sales/notes` para registrar la venta. Ejemplo:
 

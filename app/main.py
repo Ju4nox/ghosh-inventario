@@ -3,7 +3,8 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
-from fastapi import Body, FastAPI, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,7 +23,26 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="GHOSH · Inventario, pedidos y ventas", version="0.2.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+_FRONTEND_CANDIDATES = (
+    Path(__file__).resolve().parent.parent / "frontend" / "dist" / "ghosh" / "browser",
+    Path("/srv/frontend_dist"),
+)
+
+
+def _frontend_dir() -> Path | None:
+    for directory in _FRONTEND_CANDIDATES:
+        if (directory / "index.html").is_file():
+            return directory
+    return None
 
 
 @app.get("/health", tags=["sistema"])
@@ -98,7 +118,10 @@ def list_inventory_movements(
 
 @app.get("/", include_in_schema=False)
 def dashboard():
-    """Sirve la interfaz web de inventario."""
+    """Sirve la interfaz web de inventario (Angular SPA o respaldo estático)."""
+    frontend = _frontend_dir()
+    if frontend is not None:
+        return FileResponse(frontend / "index.html")
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
@@ -228,9 +251,15 @@ async def import_receipts_excel(
     with pool.connection() as conn:
         plan = preview_receipt_workbook(conn, content, hoja, fecha_vencimiento, batch_ref)
         rows = plan.pop("rows", [])
+        omitted_rows = plan.get("omitted_rows", [])
         if plan["errors"]:
             return JSONResponse(status_code=422, content={
                 **plan, "status": "rejected", "received": 0,
+            })
+        if not rows:
+            return JSONResponse(status_code=422, content={
+                **plan, "status": "rejected", "received": 0,
+                "errors": [{"row": 1, "field": "codigo_i", "code": "no_identified_rows", "message": "No hay artículos con un Código I o Código B único para recibir."}],
             })
         new_products = [
             {"row": row["row"], **row["nuevo_producto"]}
@@ -253,12 +282,13 @@ async def import_receipts_excel(
         except BulkReceiptError as exc:
             return JSONResponse(status_code=422, content={
                 "status": "rejected", "selected_sheet": hoja, "batch_ref": batch_ref,
-                "total_rows": len(rows), "received": 0, "errors": exc.errors,
+                "total_rows": plan["total_rows"], "received": 0,
+                "omitted_rows": len(omitted_rows), "omitted_details": omitted_rows, "errors": exc.errors,
             })
     created_products = sum(1 for item in results if item.get("producto_creado"))
     return {
         "status": "received", "selected_sheet": hoja, "batch_ref": batch_ref,
-        "total_rows": len(rows), "received": len(results),
+        "total_rows": plan["total_rows"], "omitted_rows": len(omitted_rows), "omitted_details": omitted_rows, "received": len(results),
         "created_products": created_products, "existing_products": len(results) - created_products,
         "items": [{"row": item["row"], **{key: value for key, value in item.items() if key != "row"}} for item in results],
     }
@@ -277,5 +307,20 @@ def register_sale_note(note: SaleRequest):
         return create_sale(conn, note)
 
 
+_SPA_ROUTES = frozenset({"catalogo", "ventas", "recepcion", "movimientos"})
 
 
+@app.get("/{spa_path:path}", include_in_schema=False)
+def serve_spa(spa_path: str):
+    """Sirve recursos estáticos compilados de Angular y rutas SPA."""
+    frontend = _frontend_dir()
+    if frontend is not None:
+        resolved_root = frontend.resolve()
+        candidate = (resolved_root / spa_path).resolve()
+        if resolved_root in candidate.parents and candidate.is_file():
+            return FileResponse(candidate)
+        if spa_path.strip("/") in _SPA_ROUTES:
+            return FileResponse(resolved_root / "index.html")
+    elif spa_path.strip("/") in _SPA_ROUTES:
+        return FileResponse(Path(__file__).parent / "static" / "index.html")
+    raise HTTPException(status_code=404, detail="Not Found")

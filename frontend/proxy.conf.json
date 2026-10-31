@@ -1,0 +1,22 @@
+{
+  "/health": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/catalog/": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/inventory/": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  },
+  "/sales/": {
+    "target": "http://localhost:8000",
+    "secure": false,
+    "changeOrigin": true
+  }
+}
