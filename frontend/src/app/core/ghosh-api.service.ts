@@ -10,6 +10,7 @@ import {
   MovementsResponse,
   ProductDeleteResponse,
   ProductStatusResponse,
+  PurgeStockResponse,
   ReceiptOptionsResponse,
   SaleOptionsResponse,
   SaleRequestPayload,
@@ -90,6 +91,13 @@ export class GhoshApiService {
 
   getReceiptOptions(): Observable<ReceiptOptionsResponse> {
     return this.http.get<ReceiptOptionsResponse>('/inventory/receipt-options').pipe(
+      tap(() => this.apiOnline.set(true)),
+      catchError((err) => this.handleError(err)),
+    );
+  }
+
+  purgeCatalogStock(): Observable<PurgeStockResponse> {
+    return this.http.post<PurgeStockResponse>('/inventory/purge-stock', {}).pipe(
       tap(() => this.apiOnline.set(true)),
       catchError((err) => this.handleError(err)),
     );

@@ -218,6 +218,18 @@ interface ActionFeedback {
             </button>
 
             <button
+              id="catalog-purge-stock"
+              type="button"
+              class="btn btn-ghost btn-sm text-[#a1a1aa] hover:text-[#fafafa]"
+              title="Dejar el stock de todos los artículos en 0 (testeo de purga)"
+              [disabled]="purging() || loading()"
+              (click)="onPurgeStock()"
+            >
+              <lucide-icon [img]="icons.RotateCcw" [size]="14" [strokeWidth]="1.5"></lucide-icon>
+              <span>{{ purging() ? 'Purgando…' : 'Purgar stock (0)' }}</span>
+            </button>
+
+            <button
               id="catalog-refresh"
               type="button"
               class="btn btn-ghost btn-sm"
@@ -510,6 +522,7 @@ export class CatalogPageComponent implements OnInit {
   readonly offset = signal(0);
   readonly includeInactive = signal(false);
   readonly loading = signal(false);
+  readonly purging = signal(false);
   readonly loaded = signal(false);
   readonly errorMessage = signal<string | null>(null);
   readonly feedback = signal<ActionFeedback | null>(null);
@@ -594,6 +607,48 @@ export class CatalogPageComponent implements OnInit {
     this.includeInactive.update((v) => !v);
     this.offset.set(0);
     this.loadCatalog();
+  }
+
+  async onPurgeStock(): Promise<void> {
+    const confirmed = await this.confirmModal.confirm({
+      title: 'Purgar existencias a 0 (testeo de purga)',
+      message:
+        '¿Quieres dejar en 0 el stock de todos los artículos del catálogo? Ningún artículo ni lote será eliminado de la base de datos.',
+      highlight:
+        'Cada descuento quedará registrado en el historial de Movimientos como ajuste con el motivo "(testeo de purga)".',
+      confirmLabel: 'Sí, dejar stock en 0',
+      tone: 'warning',
+    });
+
+    if (!confirmed) return;
+
+    this.purging.set(true);
+    this.feedback.set(null);
+
+    this.api.purgeCatalogStock().subscribe({
+      next: (res) => {
+        this.purging.set(false);
+        const lots = Number(res.lots_zeroed ?? 0);
+        const units = Number(res.units_removed ?? 0);
+        this.feedback.set({
+          success: true,
+          title: 'Existencias reseteadas a 0',
+          message:
+            lots > 0
+              ? `Se ajustaron ${formatQuantity(lots)} lotes (${formatQuantity(units)} unidades llevadas a 0) conservando todos los artículos. Registro en Movimientos: ${res.motivo}.`
+              : 'Todos los artículos del catálogo ya se encontraban con stock en 0.',
+        });
+        this.loadCatalog();
+      },
+      error: (err) => {
+        this.purging.set(false);
+        this.feedback.set({
+          success: false,
+          title: 'No se pudo completar la purga de stock',
+          message: this.api.extractErrorMessage(err, 'No se pudo conectar con la API.'),
+        });
+      },
+    });
   }
 
   prevPage(): void {

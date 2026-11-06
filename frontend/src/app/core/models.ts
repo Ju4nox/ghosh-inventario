@@ -196,3 +196,11 @@ export interface MovementsResponse {
   limit: number;
   offset: number;
 }
+
+export interface PurgeStockResponse {
+  status: 'purged';
+  lots_zeroed: number;
+  units_removed: number | string;
+  motivo: string;
+}
+

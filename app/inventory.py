@@ -382,4 +382,70 @@ def receipt_options(conn) -> dict:
     return {"bodegas": warehouses, "operadores": operators}
 
 
+PURGE_REASON = "(testeo de purga)"
+
+
+def purge_inventory_stock(conn) -> dict:
+    """Deja en 0 las existencias físicas de todos los artículos sin eliminarlos y registra el ajuste auditable."""
+    with conn.transaction():
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id_tipo FROM tipo_movimiento WHERE nombre = 'ajuste'")
+            movement_type = cursor.fetchone()
+            if movement_type is None:
+                raise HTTPException(status_code=500, detail={
+                    "code": "adjustment_movement_missing",
+                    "message": "No está configurado el tipo de movimiento 'ajuste'.",
+                })
+
+            cursor.execute(
+                """SELECT u.id_usuario
+                   FROM usuario u
+                   JOIN rol r ON r.id_rol = u.id_rol
+                   WHERE u.activo = TRUE
+                   ORDER BY CASE WHEN r.nombre = 'bodega' THEN 0 WHEN r.nombre = 'gerencia' THEN 1 ELSE 2 END, u.id_usuario
+                   LIMIT 1"""
+            )
+            user = cursor.fetchone()
+            if user is None:
+                raise HTTPException(status_code=404, detail={
+                    "code": "active_user_not_found",
+                    "message": "No existe un usuario activo para registrar el movimiento de purga.",
+                })
+
+            cursor.execute(
+                """SELECT l.id_lote, l.cantidad_fisica
+                   FROM lote l
+                   JOIN producto p ON p.id_producto = l.id_producto
+                   WHERE p.eliminado = FALSE AND l.cantidad_fisica > 0
+                   ORDER BY l.id_lote
+                   FOR UPDATE OF l"""
+            )
+            lots = cursor.fetchall()
+            total_removed = Decimal("0")
+
+            for lot_id, current_qty in lots:
+                qty = Decimal(current_qty)
+                if qty <= 0:
+                    continue
+                total_removed += qty
+                cursor.execute(
+                    "UPDATE lote SET cantidad_fisica = 0 WHERE id_lote = %s",
+                    (lot_id,),
+                )
+                cursor.execute(
+                    """INSERT INTO movimiento_inventario
+                           (id_lote, id_tipo, id_usuario, cantidad, motivo)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (lot_id, movement_type[0], user[0], -qty, PURGE_REASON),
+                )
+
+    return {
+        "status": "purged",
+        "lots_zeroed": len(lots),
+        "units_removed": total_removed,
+        "motivo": PURGE_REASON,
+    }
+
+
+
 

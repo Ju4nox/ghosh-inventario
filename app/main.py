@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.catalog import MAX_CSV_BYTES, delete_catalog_product, import_catalog_rows, search_catalog, set_product_active, validate_csv
 from app.db import pool
-from app.inventory import BulkReceiptError, ReceiptRequest, import_receipts, movement_history, parse_receipt_csv, receipt_options, receive_goods
+from app.inventory import BulkReceiptError, ReceiptRequest, import_receipts, movement_history, parse_receipt_csv, purge_inventory_stock, receipt_options, receive_goods
 from app.sales import SaleRequest, create_sale, sale_options
 from app.receipt_excel import MAX_EXCEL_BYTES, preview_receipt_workbook
 
@@ -154,6 +154,13 @@ def get_receipt_options():
     """Lista bodegas y operadores habilitados para registrar recepciones."""
     with pool.connection() as conn:
         return receipt_options(conn)
+
+
+@app.post("/inventory/purge-stock", tags=["inventario"])
+def reset_all_inventory_stock():
+    """Deja el stock de todos los productos en 0 sin eliminarlos, registrando '(testeo de purga)' en movimientos."""
+    with pool.connection() as conn:
+        return purge_inventory_stock(conn)
 
 
 @app.post("/inventory/receipts/import", status_code=201, tags=["inventario"])
