@@ -1,17 +1,21 @@
 """API base de GHOSH (ticket GHOSH-4)."""
 from contextlib import asynccontextmanager
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from app.catalog import MAX_CSV_BYTES, delete_catalog_product, import_catalog_rows, search_catalog, set_product_active, validate_csv
+from app.analytics import build_demand_csv, demand_ranking, inventory_alerts
+
+from app.catalog import CatalogAuditRequest, MAX_CSV_BYTES, catalog_audit_history, catalog_audit_options, delete_catalog_product, import_catalog_rows, search_catalog, set_product_active, validate_csv
 from app.db import pool
-from app.inventory import BulkReceiptError, ReceiptRequest, import_receipts, movement_history, parse_receipt_csv, purge_inventory_stock, receipt_options, receive_goods
-from app.sales import SaleRequest, create_sale, sale_options
+from app.inventory import BulkReceiptError, ReceiptRequest, ShrinkageRequest, import_receipts, movement_history, parse_receipt_csv, purge_inventory_stock, receipt_options, receive_goods, register_stock_shrinkage
+from app.pdf_generator import build_sale_note_pdf
+from app.sales import CancelOrderRequest, DispatchOrderRequest, ExpireReservationsRequest, FrequentClientRequest, SaleRequest, cancel_order, create_sale, dispatch_order, expire_reservations, get_sale_note, list_orders, list_sale_notes, sale_options, save_frequent_client
 from app.receipt_excel import MAX_EXCEL_BYTES, preview_receipt_workbook
 
 
@@ -108,12 +112,13 @@ def register_receipt(receipt: ReceiptRequest):
 def list_inventory_movements(
     sku: str | None = None,
     codigo_lote: str | None = None,
+    tipo: str | None = Query(default=None, max_length=40),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
 ):
-    """Consulta el historial de movimientos, filtrable por SKU y lote."""
+    """Consulta el historial de movimientos, filtrable por SKU/nombre, lote y categoría."""
     with pool.connection() as conn:
-        return movement_history(conn, sku=sku, codigo_lote=codigo_lote, limit=limit, offset=offset)
+        return movement_history(conn, sku=sku, codigo_lote=codigo_lote, tipo=tipo, limit=limit, offset=offset)
 
 
 @app.get("/", include_in_schema=False)
@@ -139,15 +144,43 @@ def list_catalog_products(
         return search_catalog(conn, q=q, categoria=categoria, limit=limit, offset=offset, id_bodega=id_bodega, incluir_inactivos=incluir_inactivos)
 
 @app.patch("/catalog/products/{sku}/status", tags=["catalogo"])
-def update_catalog_product_status(sku: str, activo: bool = Body(embed=True)):
+def update_catalog_product_status(
+    sku: str,
+    activo: bool = Body(embed=True),
+    id_usuario: int | None = Body(default=None, embed=True),
+    motivo: str | None = Body(default=None, embed=True),
+):
     """Da de baja o reactiva un producto conservando lotes y movimientos."""
     with pool.connection() as conn:
-        return set_product_active(conn, sku, activo)
+        audit = CatalogAuditRequest(id_usuario=id_usuario, motivo=motivo) if not activo else None
+        return set_product_active(conn, sku, activo, audit)
 @app.delete("/catalog/products/{sku}", tags=["catalogo"])
-def remove_catalog_product(sku: str):
+def remove_catalog_product(sku: str, audit: CatalogAuditRequest):
     """Elimina un producto del catálogo y libera sus códigos, conservando su historial."""
     with pool.connection() as conn:
-        return delete_catalog_product(conn, sku)
+        return delete_catalog_product(conn, sku, audit)
+
+@app.post("/catalog/products/{sku}/shrinkage", tags=["catalogo"])
+def record_catalog_product_shrinkage(sku: str, payload: ShrinkageRequest):
+    """Registra una merma de stock auditable descontando por FEFO de los lotes del producto."""
+    with pool.connection() as conn:
+        return register_stock_shrinkage(conn, sku, payload)
+
+@app.get("/catalog/audit-options", tags=["catalogo"])
+def get_catalog_audit_options():
+    """Lista responsables válidos para retiros y eliminaciones auditables."""
+    with pool.connection() as conn:
+        return catalog_audit_options(conn)
+
+@app.get("/catalog/audit", tags=["catalogo"])
+def list_catalog_audit(
+    sku: str | None = Query(default=None, max_length=40),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+):
+    """Consulta el registro de retiros y eliminaciones del catálogo."""
+    with pool.connection() as conn:
+        return catalog_audit_history(conn, sku=sku, limit=limit, offset=offset)
 
 @app.get("/inventory/receipt-options", tags=["inventario"])
 def get_receipt_options():
@@ -302,19 +335,207 @@ async def import_receipts_excel(
 
 @app.get("/sales/options", tags=["ventas"])
 def get_sale_options():
-    """Lista bodegas y vendedores activos disponibles para las notas."""
+    """Lista bodegas, vendedores activos y clientes frecuentes disponibles para las notas."""
     with pool.connection() as conn:
         return sale_options(conn)
 
 
+@app.post("/sales/frequent-clients", status_code=201, tags=["ventas"])
+def post_frequent_client(client: FrequentClientRequest):
+    """Guarda o actualiza un cliente frecuente con alias y dirección de entrega."""
+    with pool.connection() as conn:
+        return save_frequent_client(conn, client)
+
+
+@app.get("/sales/notes", tags=["ventas"])
+def get_sale_notes(
+    q: str | None = Query(default=None, max_length=120),
+    id_bodega: int | None = Query(default=None, gt=0),
+    numero: int | None = Query(default=None, gt=0),
+    id_pedido: int | None = Query(default=None, gt=0),
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    estado: str | None = Query(default=None, max_length=30),
+    id_vendedor: int | None = Query(default=None, gt=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Consulta contable de todas las notas de venta emitidas desde la vista SQL."""
+    with pool.connection() as conn:
+        return list_sale_notes(
+            conn,
+            q=q,
+            id_bodega=id_bodega,
+            numero=numero,
+            id_pedido=id_pedido,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            estado=estado,
+            id_vendedor=id_vendedor,
+            limit=limit,
+            offset=offset,
+        )
+
+
+@app.get("/sales/notes/{numero}", tags=["ventas"])
+def get_sale_note_by_number(numero: int):
+    """Consulta una nota de venta por su número correlativo."""
+    with pool.connection() as conn:
+        return get_sale_note(conn, numero)
+
+
+@app.get("/sales/notes/{numero}/pdf", tags=["ventas"])
+def download_sale_note_pdf(numero: int):
+    """Genera y descarga el PDF de una nota de venta con detalle, precios confirmados y total."""
+    with pool.connection() as conn:
+        note = get_sale_note(conn, numero)
+    pdf_bytes = build_sale_note_pdf(note)
+    filename = f"nota-venta-{str(note['numero']).zfill(4)}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/sales/notes", status_code=201, tags=["ventas"])
 def register_sale_note(note: SaleRequest):
-    """Registra una nota de venta y descuenta las unidades disponibles."""
+    """Registra una nota de venta, genera su pedido pendiente y reserva stock FEFO."""
     with pool.connection() as conn:
         return create_sale(conn, note)
 
 
-_SPA_ROUTES = frozenset({"catalogo", "ventas", "recepcion", "movimientos"})
+@app.get("/orders", tags=["pedidos"])
+def get_orders(
+    estado: str | None = Query(default=None, max_length=30),
+    q: str | None = Query(default=None, max_length=120),
+    id_bodega: int | None = Query(default=None, gt=0),
+    numero_nota: int | None = Query(default=None, gt=0),
+    id_pedido: int | None = Query(default=None, gt=0),
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """Lista y audita los pedidos activos (pendientes), despachados y anulados desde notas de venta."""
+    with pool.connection() as conn:
+        return list_orders(
+            conn,
+            estado=estado,
+            q=q,
+            id_bodega=id_bodega,
+            numero_nota=numero_nota,
+            id_pedido=id_pedido,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            limit=limit,
+            offset=offset,
+        )
+
+
+@app.post("/orders/{id_pedido}/dispatch", tags=["pedidos"])
+def post_dispatch_order(id_pedido: int, payload: DispatchOrderRequest):
+    """Valida estado pendiente y nota de venta vigente para marcar el pedido como despachado."""
+    with pool.connection() as conn:
+        return dispatch_order(conn, id_pedido, payload)
+
+
+@app.post("/orders/{id_pedido}/cancel", tags=["pedidos"])
+def post_cancel_order(id_pedido: int, payload: CancelOrderRequest):
+    """Anula un pedido pendiente con motivo, libera reservas vigentes y audita el movimiento."""
+    with pool.connection() as conn:
+        return cancel_order(conn, id_pedido, payload)
+
+
+@app.post("/orders/expire", tags=["pedidos"])
+def post_expire_reservations(payload: ExpireReservationsRequest | None = None):
+    """Expira de forma idempotente todas las reservas vencidas y restaura disponible una sola vez."""
+    body = payload or ExpireReservationsRequest()
+    with pool.connection() as conn:
+        return expire_reservations(conn, order_id=None, id_usuario=body.id_usuario, motivo=body.motivo)
+
+
+@app.post("/orders/{id_pedido}/expire", tags=["pedidos"])
+def post_expire_order_reservations(id_pedido: int, payload: ExpireReservationsRequest | None = None):
+    """Expira de forma idempotente las reservas vigentes de un pedido y restaura disponible una sola vez."""
+    body = payload or ExpireReservationsRequest()
+    with pool.connection() as conn:
+        return expire_reservations(conn, order_id=id_pedido, id_usuario=body.id_usuario, motivo=body.motivo)
+
+
+@app.get("/reports/demand", tags=["reportes"])
+def get_demand_report(
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    id_bodega: int | None = Query(default=None, gt=0),
+    categoria: str | None = Query(default=None, max_length=60),
+    q: str | None = Query(default=None, max_length=120),
+    incluir_sin_demanda: bool = True,
+    limit: int = Query(default=20, ge=1, le=200),
+):
+    """Ranking de mayor y menor demanda por período excluyendo pedidos cancelados (GHOSH-18)."""
+    with pool.connection() as conn:
+        return demand_ranking(
+            conn,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            id_bodega=id_bodega,
+            categoria=categoria,
+            q=q,
+            incluir_sin_demanda=incluir_sin_demanda,
+            limit=limit,
+        )
+
+
+@app.get("/reports/demand.csv", tags=["reportes"])
+def get_demand_report_csv(
+    fecha_desde: date | None = None,
+    fecha_hasta: date | None = None,
+    id_bodega: int | None = Query(default=None, gt=0),
+    categoria: str | None = Query(default=None, max_length=60),
+    q: str | None = Query(default=None, max_length=120),
+    incluir_sin_demanda: bool = True,
+    limit: int = Query(default=20, ge=1, le=200),
+):
+    """Exporta el ranking de mayor y menor demanda del período en formato CSV UTF-8 (GHOSH-18)."""
+    with pool.connection() as conn:
+        ranking = demand_ranking(
+            conn,
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            id_bodega=id_bodega,
+            categoria=categoria,
+            q=q,
+            incluir_sin_demanda=incluir_sin_demanda,
+            limit=limit,
+        )
+    csv_bytes = build_demand_csv(ranking)
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="ranking-demanda-ghosh.csv"'},
+    )
+
+
+@app.get("/inventory/alerts", tags=["inventario"])
+def get_inventory_alerts(
+    id_bodega: int | None = Query(default=None, gt=0),
+    dias_vencimiento: int = Query(default=30, ge=0, le=3650),
+    umbral_stock: Decimal = Query(default=Decimal("10"), ge=0),
+    q: str | None = Query(default=None, max_length=120),
+):
+    """Alertas activas de stock crítico/agotado y lotes vencidos o próximos a vencer (GHOSH-19)."""
+    with pool.connection() as conn:
+        return inventory_alerts(
+            conn,
+            id_bodega=id_bodega,
+            dias_vencimiento=dias_vencimiento,
+            umbral_stock=umbral_stock,
+            q=q,
+        )
+
+
+_SPA_ROUTES = frozenset({"catalogo", "ventas", "pedidos", "notas-venta", "recepcion", "movimientos", "demanda"})
 
 
 @app.get("/{spa_path:path}", include_in_schema=False)
@@ -325,6 +546,10 @@ def serve_spa(spa_path: str):
         resolved_root = frontend.resolve()
         candidate = (resolved_root / spa_path).resolve()
         if resolved_root in candidate.parents and candidate.is_file():
+            if candidate.suffix == ".webmanifest":
+                return FileResponse(candidate, media_type="application/manifest+json")
+            if candidate.name == "sw.js":
+                return FileResponse(candidate, media_type="application/javascript")
             return FileResponse(candidate)
         if spa_path.strip("/") in _SPA_ROUTES:
             return FileResponse(resolved_root / "index.html")

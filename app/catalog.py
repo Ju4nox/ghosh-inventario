@@ -4,6 +4,7 @@ import io
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from fastapi import HTTPException
+from pydantic import BaseModel, Field, field_validator
 
 REQUIRED_COLUMNS = (
     "codigo_i",
@@ -18,6 +19,21 @@ ALLOWED_COLUMNS = frozenset(REQUIRED_COLUMNS)
 MAX_CSV_BYTES = 5 * 1024 * 1024
 DEFAULT_CATEGORY = "Lista de precios"
 DEFAULT_UNIT = "unidad"
+
+
+class CatalogAuditRequest(BaseModel):
+    """Datos obligatorios para dejar trazabilidad de una baja de catálogo."""
+
+    id_usuario: int = Field(gt=0)
+    motivo: str = Field(min_length=1, max_length=300)
+
+    @field_validator("motivo")
+    @classmethod
+    def trim_reason(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("El motivo no puede estar vacío.")
+        return value
 
 
 def _error(row: int, field: str, code: str, message: str) -> dict:
@@ -181,6 +197,16 @@ def import_catalog_rows(conn, rows: list[dict]) -> list[dict]:
             return errors
 
         with conn.transaction():
+            _ensure_audit_schema(cursor)
+            cursor.execute(
+                """SELECT u.id_usuario, u.nombre
+                   FROM usuario u
+                   JOIN rol r ON r.id_rol = u.id_rol
+                   WHERE u.activo = TRUE AND u.eliminado = FALSE
+                   ORDER BY CASE WHEN r.nombre = 'gerencia' THEN 0 WHEN r.nombre = 'bodega' THEN 1 ELSE 2 END, u.id_usuario
+                   LIMIT 1"""
+            )
+            actor = cursor.fetchone()
             for row in rows:
                 cursor.execute(
                     """INSERT INTO producto
@@ -195,17 +221,154 @@ def import_catalog_rows(conn, rows: list[dict]) -> list[dict]:
                            id_unidad = EXCLUDED.id_unidad,
                            precio_vigente = EXCLUDED.precio_vigente,
                            unidades_por_caja = EXCLUDED.unidades_por_caja
-                       RETURNING id_producto""",
+                       RETURNING id_producto, (xmax = 0) AS inserted""",
                     (
                         row["sku"], row["codigo_b"], row["nombre"], row["peso"],
                         category[0], unit[0], row["precio_vigente"], row["unidades_por_caja"],
                     ),
                 )
-                cursor.fetchone()
+                product_id, inserted = cursor.fetchone()
+                if inserted and actor is not None:
+                    cursor.execute(
+                        """INSERT INTO auditoria_catalogo
+                               (id_producto, sku_producto, nombre_producto, accion, id_usuario, nombre_usuario, motivo)
+                           VALUES (%s, %s, %s, 'alta', %s, %s, %s)""",
+                        (
+                            product_id,
+                            row["sku"],
+                            row["nombre"],
+                            actor[0],
+                            actor[1],
+                            "Producto agregado desde catálogo CSV",
+                        ),
+                    )
     return []
 
 
-def set_product_active(conn, sku: str, active: bool) -> dict:
+def _ensure_audit_schema(cursor) -> None:
+    """Garantiza de forma idempotente las columnas, tabla y altas históricas de auditoría."""
+    cursor.execute(
+        """SELECT 1
+           FROM information_schema.columns
+           WHERE table_name = 'usuario' AND column_name = 'eliminado'"""
+    )
+    if cursor.fetchone() is None:
+        cursor.execute("ALTER TABLE usuario ADD COLUMN IF NOT EXISTS eliminado BOOLEAN NOT NULL DEFAULT FALSE")
+
+    cursor.execute(
+        """CREATE TABLE IF NOT EXISTS auditoria_catalogo (
+               id_auditoria    SERIAL PRIMARY KEY,
+               id_producto     INTEGER NOT NULL REFERENCES producto(id_producto),
+               sku_producto    VARCHAR(40) NOT NULL,
+               nombre_producto VARCHAR(120) NOT NULL,
+               accion          VARCHAR(20) NOT NULL CHECK (accion IN ('alta', 'retiro', 'eliminacion', 'merma')),
+               id_usuario      INTEGER NOT NULL REFERENCES usuario(id_usuario),
+               nombre_usuario  VARCHAR(100) NOT NULL,
+               motivo          VARCHAR(300) NOT NULL,
+               fecha           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+           )"""
+    )
+    cursor.execute(
+        """SELECT 1
+           FROM pg_constraint
+           WHERE conrelid = 'auditoria_catalogo'::regclass
+             AND conname = 'auditoria_catalogo_accion_check'
+             AND pg_get_constraintdef(oid) LIKE '%alta%'"""
+    )
+    if cursor.fetchone() is None:
+        cursor.execute(
+            """ALTER TABLE auditoria_catalogo DROP CONSTRAINT IF EXISTS auditoria_catalogo_accion_check;
+               ALTER TABLE auditoria_catalogo ADD CONSTRAINT auditoria_catalogo_accion_check
+                   CHECK (accion IN ('alta', 'retiro', 'eliminacion', 'merma'));"""
+        )
+
+    cursor.execute(
+        """INSERT INTO auditoria_catalogo
+               (id_producto, sku_producto, nombre_producto, accion, id_usuario, nombre_usuario, motivo, fecha)
+           SELECT
+               p.id_producto,
+               p.sku,
+               p.nombre,
+               'alta',
+               COALESCE(primer_mov.id_usuario, u_def.id_usuario),
+               COALESCE(primer_mov.nombre_usuario, u_def.nombre),
+               'Producto agregado al catálogo',
+               COALESCE(primer_mov.fecha, NOW())
+           FROM producto p
+           CROSS JOIN LATERAL (
+               SELECT id_usuario, nombre FROM usuario WHERE activo = TRUE ORDER BY id_usuario LIMIT 1
+           ) u_def
+           LEFT JOIN LATERAL (
+               SELECT m.id_usuario, u.nombre AS nombre_usuario, m.fecha
+               FROM lote l
+               JOIN movimiento_inventario m ON m.id_lote = l.id_lote
+               JOIN usuario u ON u.id_usuario = m.id_usuario
+               WHERE l.id_producto = p.id_producto
+               ORDER BY m.fecha ASC, m.id_movimiento ASC
+               LIMIT 1
+           ) primer_mov ON TRUE
+           WHERE NOT EXISTS (
+               SELECT 1 FROM auditoria_catalogo ac
+               WHERE ac.id_producto = p.id_producto AND ac.accion = 'alta'
+           )"""
+    )
+
+
+def _audit_actor(cursor, user_id: int) -> str:
+    """Valida al responsable y devuelve su nombre como instantánea histórica."""
+    _ensure_audit_schema(cursor)
+    cursor.execute(
+        """SELECT nombre
+           FROM usuario
+           WHERE id_usuario = %s AND activo = TRUE AND eliminado = FALSE""",
+        (user_id,),
+    )
+    actor = cursor.fetchone()
+    if actor is None:
+        raise HTTPException(status_code=404, detail={
+            "code": "audit_actor_not_found",
+            "message": f"No existe un usuario activo con ID {user_id} para registrar la auditoría.",
+        })
+    return actor[0]
+
+
+def _record_catalog_audit(
+    cursor,
+    *,
+    product_id: int,
+    sku: str,
+    product_name: str,
+    action: str,
+    audit: CatalogAuditRequest,
+) -> dict:
+    actor_name = _audit_actor(cursor, audit.id_usuario)
+    cursor.execute(
+        """INSERT INTO auditoria_catalogo
+               (id_producto, sku_producto, nombre_producto, accion, id_usuario, nombre_usuario, motivo)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)
+           RETURNING id_auditoria, fecha""",
+        (
+            product_id,
+            sku,
+            product_name,
+            action,
+            audit.id_usuario,
+            actor_name,
+            audit.motivo,
+        ),
+    )
+    audit_id, created_at = cursor.fetchone()
+    return {
+        "id_auditoria": audit_id,
+        "accion": action,
+        "id_usuario": audit.id_usuario,
+        "usuario": actor_name,
+        "motivo": audit.motivo,
+        "fecha": created_at,
+    }
+
+
+def set_product_active(conn, sku: str, active: bool, audit: CatalogAuditRequest | None = None) -> dict:
     """Retira o reactiva un producto sin borrar su historial ni sus lotes."""
     normalized_sku = sku.strip()
     if not normalized_sku:
@@ -220,7 +383,22 @@ def set_product_active(conn, sku: str, active: bool) -> dict:
             if product is None:
                 raise HTTPException(status_code=404, detail={"code": "product_not_found", "message": f"No existe el producto con Código I '{normalized_sku}'."})
             product_id, name, current_status = product
+            audit_record = None
             if current_status != active:
+                if not active:
+                    if audit is None:
+                        raise HTTPException(status_code=422, detail={
+                            "code": "audit_details_required",
+                            "message": "Indica el motivo y el responsable para retirar el producto.",
+                        })
+                    audit_record = _record_catalog_audit(
+                        cursor,
+                        product_id=product_id,
+                        sku=normalized_sku,
+                        product_name=name,
+                        action="retiro",
+                        audit=audit,
+                    )
                 cursor.execute("UPDATE producto SET activo = %s WHERE id_producto = %s", (active, product_id))
             cursor.execute(
                 "SELECT COALESCE(SUM(cantidad_fisica), 0) FROM lote WHERE id_producto = %s",
@@ -233,9 +411,10 @@ def set_product_active(conn, sku: str, active: bool) -> dict:
         "nombre": name,
         "activo": active,
         "stock_fisico": physical_stock,
+        "auditoria": audit_record,
     }
 
-def delete_catalog_product(conn, sku: str) -> dict:
+def delete_catalog_product(conn, sku: str, audit: CatalogAuditRequest) -> dict:
     """Retira el producto del catálogo y libera sus códigos sin borrar su historial."""
     normalized_sku = sku.strip()
     if not normalized_sku:
@@ -252,6 +431,14 @@ def delete_catalog_product(conn, sku: str) -> dict:
             product_id, name, active = product
             if active:
                 raise HTTPException(status_code=409, detail={"code": "product_must_be_retired", "message": "Retira el producto antes de eliminarlo del catálogo."})
+            audit_record = _record_catalog_audit(
+                cursor,
+                product_id=product_id,
+                sku=normalized_sku,
+                product_name=name,
+                action="eliminacion",
+                audit=audit,
+            )
             cursor.execute(
                 "UPDATE producto SET eliminado = TRUE WHERE id_producto = %s",
                 (product_id,),
@@ -267,7 +454,51 @@ def delete_catalog_product(conn, sku: str) -> dict:
         "nombre": name,
         "codigos_liberados": True,
         "stock_fisico_conservado": physical_stock,
+        "auditoria": audit_record,
     }
+
+
+def catalog_audit_options(conn) -> dict:
+    """Usuarios activos que pueden quedar identificados como responsables."""
+    with conn.cursor() as cursor:
+        _ensure_audit_schema(cursor)
+        cursor.execute(
+            """SELECT id_usuario, nombre
+               FROM usuario
+               WHERE activo = TRUE AND eliminado = FALSE
+               ORDER BY nombre"""
+        )
+        users = [{"id_usuario": row[0], "nombre": row[1]} for row in cursor.fetchall()]
+    return {"usuarios": users}
+
+
+def catalog_audit_history(conn, sku: str | None = None, limit: int = 50, offset: int = 0) -> dict:
+    """Consulta los retiros y eliminaciones sin depender del estado actual del producto."""
+    parameters: list[object] = []
+    where = ""
+    if sku is not None:
+        normalized_sku = sku.strip()
+        if not normalized_sku:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_sku_filter",
+                "message": "El filtro sku no puede estar vacío.",
+            })
+        where = " WHERE sku_producto = %s"
+        parameters.append(normalized_sku)
+    with conn.cursor() as cursor:
+        _ensure_audit_schema(cursor)
+        cursor.execute("SELECT COUNT(*) FROM auditoria_catalogo" + where, parameters)
+        total = cursor.fetchone()[0]
+        cursor.execute(
+            """SELECT id_auditoria, id_producto, sku_producto, nombre_producto, accion,
+                      id_usuario, nombre_usuario, motivo, fecha
+               FROM auditoria_catalogo""" + where +
+            " ORDER BY fecha DESC, id_auditoria DESC LIMIT %s OFFSET %s",
+            [*parameters, limit, offset],
+        )
+        columns = [column.name for column in cursor.description]
+        items = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 def search_catalog(conn, q: str | None = None, categoria: str | None = None,
                    limit: int = 20, offset: int = 0, id_bodega: int | None = None, incluir_inactivos: bool = False) -> dict:
@@ -308,7 +539,7 @@ def search_catalog(conn, q: str | None = None, categoria: str | None = None,
                        JOIN estado_reserva er ON er.id_estado_reserva = rv.id_estado_reserva
                        WHERE rv.id_lote = l.id_lote
                          AND er.nombre = 'vigente'
-                         AND rv.fecha_expiracion > NOW()
+                         AND (rv.fecha_expiracion IS NULL OR rv.fecha_expiracion > NOW())
                    ) r ON TRUE
                    WHERE (l.fecha_vencimiento IS NULL OR l.fecha_vencimiento >= CURRENT_DATE)""" + lot_where + """
                    GROUP BY l.id_producto

@@ -33,7 +33,7 @@ const MOVEMENT_PAGE_SIZE = 50;
             Movimientos
           </h1>
           <p class="mt-1 text-[13px] text-[#a1a1aa]">
-            Historial auditable de recepciones, reservas, despachos y ajustes.
+            Historial auditable de pedidos, recepciones, productos agregados, mermas y retiros.
           </p>
         </div>
         <div
@@ -45,60 +45,90 @@ const MOVEMENT_PAGE_SIZE = 50;
       </div>
 
       <!-- Panel de filtros -->
-      <form
-        id="movement-filter"
-        class="glass-panel p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] gap-3 items-end"
-        (ngSubmit)="onFilter()"
-      >
-        <label class="block">
-          <span class="field-label">Código I</span>
-          <div class="input-icon-wrap">
-            <span class="input-icon" aria-hidden="true">
-              <lucide-icon [img]="icons.Search" [size]="16" [strokeWidth]="1.5"></lucide-icon>
-            </span>
-            <input
-              id="movement-sku"
-              name="sku"
-              type="search"
-              [(ngModel)]="skuInput"
-              placeholder="Ej. TKA311001901"
-              class="glass-input has-icon pl-10"
-            />
-          </div>
-        </label>
+      <div class="glass-panel p-5 space-y-4">
+        <div class="flex flex-wrap items-center gap-2">
+          @for (filter of typeFilters; track filter.value) {
+            <button
+              type="button"
+              class="btn btn-sm"
+              [ngClass]="typeFilter() === filter.value ? 'btn-primary' : 'btn-ghost'"
+              (click)="onTypeFilterSelect(filter.value)"
+            >
+              <span>{{ filter.label }}</span>
+            </button>
+          }
+        </div>
 
-        <label class="block">
-          <span class="field-label">Código de lote</span>
-          <div class="input-icon-wrap">
-            <span class="input-icon" aria-hidden="true">
-              <lucide-icon [img]="icons.Layers" [size]="16" [strokeWidth]="1.5"></lucide-icon>
-            </span>
-            <input
-              id="movement-lot"
-              name="codigo_lote"
-              type="search"
-              [(ngModel)]="lotInput"
-              placeholder="Ej. L-LEC-A"
-              class="glass-input has-icon pl-10"
-            />
-          </div>
-        </label>
-
-        <button type="submit" class="btn btn-primary w-full lg:w-auto">
-          <span>Filtrar</span>
-          <lucide-icon [img]="icons.ArrowRight" [size]="15" [strokeWidth]="1.5"></lucide-icon>
-        </button>
-
-        <button
-          id="movement-clear"
-          type="button"
-          class="btn btn-ghost w-full lg:w-auto"
-          (click)="onClear()"
+        <form
+          id="movement-filter"
+          class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_220px_auto_auto] gap-3 items-end"
+          (ngSubmit)="onFilter()"
         >
-          <lucide-icon [img]="icons.X" [size]="15" [strokeWidth]="1.5"></lucide-icon>
-          <span>Limpiar</span>
-        </button>
-      </form>
+          <label class="block">
+            <span class="field-label">Producto o Código I</span>
+            <div class="input-icon-wrap">
+              <span class="input-icon" aria-hidden="true">
+                <lucide-icon [img]="icons.Search" [size]="16" [strokeWidth]="1.5"></lucide-icon>
+              </span>
+              <input
+                id="movement-sku"
+                name="sku"
+                type="search"
+                [(ngModel)]="skuInput"
+                placeholder="Ej. TKA311001901 o nombre"
+                class="glass-input has-icon pl-10"
+              />
+            </div>
+          </label>
+
+          <label class="block">
+            <span class="field-label">Código de lote</span>
+            <div class="input-icon-wrap">
+              <span class="input-icon" aria-hidden="true">
+                <lucide-icon [img]="icons.Layers" [size]="16" [strokeWidth]="1.5"></lucide-icon>
+              </span>
+              <input
+                id="movement-lot"
+                name="codigo_lote"
+                type="search"
+                [(ngModel)]="lotInput"
+                placeholder="Ej. L-LEC-A"
+                class="glass-input has-icon pl-10"
+              />
+            </div>
+          </label>
+
+          <label class="block">
+            <span class="field-label">Categoría de movimiento</span>
+            <select
+              id="movement-type"
+              name="tipo"
+              class="glass-input"
+              [ngModel]="typeFilter()"
+              (ngModelChange)="onTypeFilterSelect($event)"
+            >
+              @for (filter of typeFilters; track filter.value) {
+                <option [value]="filter.value">{{ filter.label }}</option>
+              }
+            </select>
+          </label>
+
+          <button type="submit" class="btn btn-primary w-full lg:w-auto">
+            <span>Filtrar</span>
+            <lucide-icon [img]="icons.ArrowRight" [size]="15" [strokeWidth]="1.5"></lucide-icon>
+          </button>
+
+          <button
+            id="movement-clear"
+            type="button"
+            class="btn btn-ghost w-full lg:w-auto"
+            (click)="onClear()"
+          >
+            <lucide-icon [img]="icons.X" [size]="15" [strokeWidth]="1.5"></lucide-icon>
+            <span>Limpiar</span>
+          </button>
+        </form>
+      </div>
 
       <!-- Tabla / Tarjetas de Auditoría -->
       <section class="glass-panel overflow-hidden" aria-labelledby="movement-table-heading">
@@ -150,14 +180,14 @@ const MOVEMENT_PAGE_SIZE = 50;
                       {{ formatChileDate(m.fecha) }}
                     </td>
                     <td>
-                      <span class="badge capitalize" [ngClass]="badgeClass(m.tipo)">
-                        {{ m.tipo }}
+                      <span class="badge" [ngClass]="badgeClass(m.tipo)">
+                        {{ formatTypeLabel(m.tipo) }}
                       </span>
                     </td>
                     <td>
                       <span class="block font-medium text-[#fafafa]">{{ m.producto }}</span>
                       <small class="block text-[11px] font-mono text-[#a1a1aa] mt-0.5">
-                        {{ m.sku }} · Lote {{ m.codigo_lote }}
+                        {{ m.codigo_lote && m.codigo_lote !== '—' ? m.sku + ' · Lote ' + m.codigo_lote : m.sku + ' · Catálogo' }}
                       </small>
                     </td>
                     <td
@@ -182,8 +212,8 @@ const MOVEMENT_PAGE_SIZE = 50;
             @for (m of items(); track m.id_movimiento) {
               <article class="glass-subtle p-4 space-y-2.5">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="badge capitalize" [ngClass]="badgeClass(m.tipo)">
-                    {{ m.tipo }}
+                  <span class="badge" [ngClass]="badgeClass(m.tipo)">
+                    {{ formatTypeLabel(m.tipo) }}
                   </span>
                   <span class="text-[11px] text-[#a1a1aa] flex items-center gap-1">
                     <lucide-icon [img]="icons.Clock" [size]="12" [strokeWidth]="1.5"></lucide-icon>
@@ -195,7 +225,7 @@ const MOVEMENT_PAGE_SIZE = 50;
                   <div>
                     <h3 class="text-[14px] font-semibold text-[#fafafa]">{{ m.producto }}</h3>
                     <p class="text-[12px] font-mono text-[#a1a1aa] mt-0.5">
-                      {{ m.sku }} · Lote {{ m.codigo_lote }}
+                      {{ m.codigo_lote && m.codigo_lote !== '—' ? m.sku + ' · Lote ' + m.codigo_lote : m.sku + ' · Catálogo' }}
                     </p>
                   </div>
                   <div
@@ -276,8 +306,22 @@ export class MovementsPageComponent implements OnInit {
     User,
   };
 
+  readonly typeFilters = [
+    { value: '', label: 'Todos' },
+    { value: 'pedidos', label: 'Pedidos' },
+    { value: 'pedidos_generados', label: 'Pedidos generados' },
+    { value: 'pedidos_vendidos', label: 'Pedidos vendidos' },
+    { value: 'pedidos_anulados', label: 'Pedidos anulados' },
+    { value: 'recepciones', label: 'Recepciones de stock' },
+    { value: 'productos_agregados', label: 'Productos agregados' },
+    { value: 'mermas', label: 'Mermas' },
+    { value: 'retiros', label: 'Retiros' },
+    { value: 'productos', label: 'Productos (Catálogo)' },
+  ];
+
   skuInput = '';
   lotInput = '';
+  readonly typeFilter = signal('');
 
   readonly items = signal<InventoryMovement[]>([]);
   readonly total = signal(0);
@@ -307,6 +351,31 @@ export class MovementsPageComponent implements OnInit {
     this.loadMovements();
   }
 
+  formatTypeLabel(tipo: string): string {
+    switch (tipo) {
+      case 'pedido_generado':
+        return 'Pedido generado';
+      case 'pedido_despachado':
+        return 'Pedido vendido';
+      case 'pedido_anulado':
+        return 'Pedido anulado';
+      case 'recepcion':
+        return 'Recepción de stock';
+      case 'producto_agregado':
+        return 'Producto agregado';
+      case 'merma':
+        return 'Merma';
+      case 'retiro':
+        return 'Retiro de catálogo';
+      case 'eliminacion':
+        return 'Eliminación';
+      case 'ajuste':
+        return 'Ajuste';
+      default:
+        return tipo;
+    }
+  }
+
   badgeClass(tipo: string): string {
     const normalized = String(tipo || '')
       .toLowerCase()
@@ -315,22 +384,33 @@ export class MovementsPageComponent implements OnInit {
 
     switch (normalized) {
       case 'recepcion':
+      case 'producto_agregado':
         return 'badge-emerald';
       case 'despacho':
+      case 'pedido_despachado':
         return 'badge-sky';
       case 'reserva':
+      case 'pedido_generado':
         return 'badge-violet';
       case 'ajuste':
-      case 'cancelacion':
+      case 'retiro':
+      case 'merma':
         return 'badge-amber';
+      case 'cancelacion':
+      case 'pedido_anulado':
+      case 'eliminacion':
+        return 'badge-rose';
       default:
         return 'badge-slate';
     }
   }
 
   formatReference(movement: InventoryMovement): string {
+    if (movement.id_pedido && movement.id_nota_venta) {
+      return `Pedido #${movement.id_pedido} · NV N° ${movement.id_nota_venta}`;
+    }
     if (movement.id_pedido) return `Pedido #${movement.id_pedido}`;
-    if (movement.id_nota_venta) return `NV #${movement.id_nota_venta}`;
+    if (movement.id_nota_venta) return `NV N° ${movement.id_nota_venta}`;
     return '—';
   }
 
@@ -342,6 +422,7 @@ export class MovementsPageComponent implements OnInit {
       .getMovements({
         sku: this.skuInput,
         codigo_lote: this.lotInput,
+        tipo: this.typeFilter(),
         limit: MOVEMENT_PAGE_SIZE,
         offset: this.offset(),
       })
@@ -364,6 +445,12 @@ export class MovementsPageComponent implements OnInit {
       });
   }
 
+  onTypeFilterSelect(value: string): void {
+    this.typeFilter.set(value);
+    this.offset.set(0);
+    this.loadMovements();
+  }
+
   onFilter(): void {
     this.offset.set(0);
     this.loadMovements();
@@ -372,6 +459,7 @@ export class MovementsPageComponent implements OnInit {
   onClear(): void {
     this.skuInput = '';
     this.lotInput = '';
+    this.typeFilter.set('');
     this.offset.set(0);
     this.loadMovements();
   }

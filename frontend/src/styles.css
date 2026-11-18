@@ -405,6 +405,167 @@
     font-weight: 500;
   }
 
+  /* ---------- Adaptación Táctil Tablet (Redmi Pad SE 11" Vertical) & Steppers ---------- */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .qty-stepper {
+    display: inline-flex;
+    align-items: center;
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid #262626;
+    background-color: #0a0a0a;
+    overflow: hidden;
+  }
+  .qty-stepper-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    border: 0;
+    background-color: #141414;
+    color: #fafafa;
+    font-size: 18px;
+    font-weight: 500;
+    line-height: 1;
+    user-select: none;
+    touch-action: manipulation;
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+  .qty-stepper-btn:hover:not(:disabled) {
+    background-color: #262626;
+  }
+  .qty-stepper-btn:active:not(:disabled) {
+    background-color: #fafafa;
+    color: #0a0a0a;
+  }
+  .qty-stepper-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .qty-stepper-input {
+    width: 100%;
+    min-width: 2.75rem;
+    height: 44px;
+    border: 0;
+    border-left: 1px solid #262626;
+    border-right: 1px solid #262626;
+    background-color: #0a0a0a;
+    color: #fafafa;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    outline: none;
+    padding: 0 6px;
+  }
+  .qty-stepper-input::-webkit-inner-spin-button,
+  .qty-stepper-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  .desktop-only-view {
+    display: none;
+  }
+  .tablet-only-view {
+    display: grid;
+  }
+  .tablet-bottom-bar {
+    display: grid;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+  }
+  @media (min-width: 1024px) {
+    .desktop-only-view {
+      display: block;
+    }
+    .tablet-only-view {
+      display: none;
+    }
+    .tablet-bottom-bar {
+      display: none;
+    }
+  }
+  .tablet-sim-active .desktop-only-view {
+    display: none !important;
+  }
+  .tablet-sim-active .tablet-only-view {
+    display: grid !important;
+  }
+  .tablet-sim-active .tablet-bottom-bar {
+    display: grid !important;
+    position: static;
+    flex-shrink: 0;
+  }
+
+  .tablet-sim-frame {
+    position: relative;
+    width: 100%;
+    margin: 0 auto;
+    border: 2px solid #262626;
+    border-radius: 20px;
+    background-color: #0a0a0a;
+    box-shadow: 0 0 0 8px #141414;
+    overflow: hidden;
+  }
+  .tablet-bezel-portrait {
+    max-width: 750px;
+    height: calc(100dvh - 108px);
+    min-height: 540px;
+    max-height: 1180px;
+  }
+  .tablet-bezel-landscape {
+    max-width: 1024px;
+    height: calc(100dvh - 108px);
+    min-height: 480px;
+    max-height: 680px;
+  }
+  .tablet-sim-portrait .lg\:grid-cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .tablet-sim-portrait .lg\:grid-cols-\[minmax\(0\,1fr\)_240px_auto_auto\] {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .tablet-sim-portrait .lg\:flex-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  @media (max-width: 1023px), (pointer: coarse) {
+    .glass-input,
+    .btn,
+    .btn-sm,
+    .tab-button {
+      min-height: 44px;
+    }
+    .btn-icon,
+    .btn-sm.btn-icon {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
+  .tablet-sim-active .glass-input,
+  .tablet-sim-active .btn,
+  .tablet-sim-active .btn-sm,
+  .tablet-sim-active .tab-button {
+    min-height: 44px;
+  }
+  .tablet-sim-active .btn-icon,
+  .tablet-sim-active .btn-sm.btn-icon {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   /* ---------- Barra de desplazamiento ---------- */
   .scroll-area {
     scrollbar-width: thin;

@@ -7,7 +7,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.catalog import DEFAULT_CATEGORY, DEFAULT_UNIT
+from app.catalog import CatalogAuditRequest, DEFAULT_CATEGORY, DEFAULT_UNIT, _ensure_audit_schema, _record_catalog_audit
 
 
 class ReceiptRequest(BaseModel):
@@ -131,9 +131,15 @@ def receive_goods(conn, receipt: ReceiptRequest) -> dict:
     }
 
 
-def movement_history(conn, sku: str | None = None, codigo_lote: str | None = None,
-                     limit: int = 50, offset: int = 0) -> dict:
-    """Consulta movimientos auditables con filtros y paginación."""
+def movement_history(
+    conn,
+    sku: str | None = None,
+    codigo_lote: str | None = None,
+    tipo: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Consulta movimientos auditables con filtros por producto, lote y categoría."""
     filters, parameters = [], []
     if sku is not None:
         sku = sku.strip()
@@ -141,35 +147,112 @@ def movement_history(conn, sku: str | None = None, codigo_lote: str | None = Non
             raise HTTPException(status_code=422, detail={
                 "code": "invalid_sku_filter", "message": "El filtro sku no puede estar vacío.",
             })
-        filters.append("p.sku = %s")
-        parameters.append(sku)
+        term = f"%{sku}%"
+        filters.append("(sku ILIKE %s OR producto ILIKE %s)")
+        parameters.extend((term, term))
     if codigo_lote is not None:
         codigo_lote = codigo_lote.strip()
         if not codigo_lote:
             raise HTTPException(status_code=422, detail={
                 "code": "invalid_lot_filter", "message": "El filtro codigo_lote no puede estar vacío.",
             })
-        filters.append("l.codigo_lote = %s")
-        parameters.append(codigo_lote)
+        filters.append("codigo_lote ILIKE %s")
+        parameters.append(f"%{codigo_lote}%")
+    if tipo is not None:
+        normalized_type = tipo.strip().casefold()
+        if not normalized_type:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_type_filter", "message": "El filtro tipo no puede estar vacío.",
+            })
+        type_clauses = {
+            "pedidos": "tipo IN ('pedido_generado', 'pedido_despachado', 'pedido_anulado')",
+            "pedidos_generados": "tipo = 'pedido_generado'",
+            "pedidos_vendidos": "tipo = 'pedido_despachado'",
+            "pedidos_anulados": "tipo = 'pedido_anulado'",
+            "recepciones": "tipo = 'recepcion'",
+            "productos_agregados": "tipo = 'producto_agregado'",
+            "mermas": "tipo = 'merma'",
+            "retiros": "tipo = 'retiro'",
+            "eliminaciones": "tipo = 'eliminacion'",
+            "productos": "tipo IN ('producto_agregado', 'retiro', 'eliminacion')",
+        }
+        clause = type_clauses.get(normalized_type)
+        if clause is None:
+            raise HTTPException(status_code=422, detail={
+                "code": "invalid_type_filter",
+                "message": f"Filtro de movimiento no soportado: '{tipo}'.",
+            })
+        filters.append(clause)
 
     where = " WHERE " + " AND ".join(filters) if filters else ""
-    from_clause = """FROM movimiento_inventario m
+    cte = """WITH todos_movimientos AS (
+        SELECT m.id_movimiento AS id_movimiento,
+               CASE
+                   WHEN tm.nombre = 'reserva' THEN 'pedido_generado'
+                   WHEN tm.nombre = 'despacho' THEN 'pedido_despachado'
+                   WHEN tm.nombre = 'cancelacion' THEN 'pedido_anulado'
+                   WHEN tm.nombre = 'ajuste' AND LEFT(LOWER(m.motivo), 5) = 'merma' THEN 'merma'
+                   ELSE tm.nombre
+               END AS tipo,
+               p.sku AS sku,
+               p.nombre AS producto,
+               l.id_lote AS id_lote,
+               l.codigo_lote AS codigo_lote,
+               l.fecha_vencimiento AS fecha_vencimiento,
+               b.id_bodega AS id_bodega,
+               b.nombre AS bodega,
+               m.cantidad AS cantidad,
+               m.fecha AS fecha,
+               m.motivo AS motivo,
+               u.id_usuario AS id_usuario,
+               u.nombre AS usuario,
+               pe.id_pedido AS id_pedido,
+               COALESCE(nv.numero, m.id_nota_venta) AS id_nota_venta
+        FROM movimiento_inventario m
         JOIN tipo_movimiento tm ON tm.id_tipo = m.id_tipo
         JOIN lote l ON l.id_lote = m.id_lote
         JOIN producto p ON p.id_producto = l.id_producto
         JOIN bodega b ON b.id_bodega = l.id_bodega
         JOIN usuario u ON u.id_usuario = m.id_usuario
-        LEFT JOIN pedido pe ON pe.id_pedido = m.id_pedido"""
+        LEFT JOIN pedido pe ON pe.id_pedido = m.id_pedido
+        LEFT JOIN nota_venta nv ON nv.id_nota_venta = m.id_nota_venta
+        UNION ALL
+        SELECT -ac.id_auditoria AS id_movimiento,
+               CASE
+                   WHEN ac.accion = 'alta' THEN 'producto_agregado'
+                   ELSE ac.accion
+               END AS tipo,
+               ac.sku_producto AS sku,
+               ac.nombre_producto AS producto,
+               0 AS id_lote,
+               '—' AS codigo_lote,
+               NULL::date AS fecha_vencimiento,
+               0 AS id_bodega,
+               'Catálogo' AS bodega,
+               0::numeric(12,3) AS cantidad,
+               ac.fecha AS fecha,
+               ac.motivo AS motivo,
+               ac.id_usuario AS id_usuario,
+               ac.nombre_usuario AS usuario,
+               NULL::integer AS id_pedido,
+               NULL::integer AS id_nota_venta
+        FROM auditoria_catalogo ac
+        WHERE ac.accion IN ('alta', 'retiro', 'eliminacion')
+    )"""
+    with conn.transaction():
+        with conn.cursor() as cursor:
+            _ensure_audit_schema(cursor)
     with conn.cursor() as cursor:
-        cursor.execute("SELECT COUNT(*) " + from_clause + where, parameters)
+        cursor.execute(cte + " SELECT COUNT(*) FROM todos_movimientos" + where, parameters)
         total = cursor.fetchone()[0]
         cursor.execute(
-            """SELECT m.id_movimiento, tm.nombre AS tipo, p.sku, p.nombre AS producto,
-                      l.id_lote, l.codigo_lote, l.fecha_vencimiento,
-                      b.id_bodega, b.nombre AS bodega, m.cantidad, m.fecha,
-                      m.motivo, u.id_usuario, u.nombre AS usuario, pe.id_pedido, m.id_nota_venta
-               """ + from_clause + where +
-            " ORDER BY m.fecha DESC, m.id_movimiento DESC LIMIT %s OFFSET %s",
+            cte +
+            """ SELECT id_movimiento, tipo, sku, producto,
+                       id_lote, codigo_lote, fecha_vencimiento,
+                       id_bodega, bodega, cantidad, fecha,
+                       motivo, id_usuario, usuario, id_pedido, id_nota_venta
+                FROM todos_movimientos""" + where +
+            " ORDER BY fecha DESC, ABS(id_movimiento) DESC LIMIT %s OFFSET %s",
             [*parameters, limit, offset],
         )
         columns = [column.name for column in cursor.description]
@@ -319,6 +402,13 @@ def import_receipts(
                             ))
                 if errors:
                     raise BulkReceiptError(errors)
+                _ensure_audit_schema(cursor)
+                actor_name = None
+                actor_id = rows[0][1].id_usuario if rows else None
+                if actor_id is not None:
+                    cursor.execute("SELECT nombre FROM usuario WHERE id_usuario = %s", (actor_id,))
+                    actor_row = cursor.fetchone()
+                    actor_name = actor_row[0] if actor_row else None
                 for product in new_products:
                     cursor.execute(
                         "SELECT id_producto FROM producto WHERE sku = %s AND eliminado = FALSE",
@@ -338,8 +428,23 @@ def import_receipts(
                             category[0], unit[0], product["precio_vigente"], product["unidades_por_caja"],
                         ),
                     )
-                    if cursor.fetchone() is not None:
+                    inserted_row = cursor.fetchone()
+                    if inserted_row is not None:
                         created_skus.add(product["sku"].casefold())
+                        if actor_id is not None and actor_name is not None:
+                            cursor.execute(
+                                """INSERT INTO auditoria_catalogo
+                                       (id_producto, sku_producto, nombre_producto, accion, id_usuario, nombre_usuario, motivo)
+                                   VALUES (%s, %s, %s, 'alta', %s, %s, %s)""",
+                                (
+                                    inserted_row[0],
+                                    product["sku"],
+                                    product["nombre"],
+                                    actor_id,
+                                    actor_name,
+                                    "Producto agregado desde lista de precios Excel",
+                                ),
+                            )
         for row_number, receipt in rows:
             try:
                 result = receive_goods(conn, receipt)
@@ -444,6 +549,149 @@ def purge_inventory_stock(conn) -> dict:
         "lots_zeroed": len(lots),
         "units_removed": total_removed,
         "motivo": PURGE_REASON,
+    }
+
+
+class ShrinkageRequest(BaseModel):
+    """Solicitud auditable para registrar una merma de stock en el catálogo."""
+
+    cantidad: Decimal = Field(gt=0, max_digits=12, decimal_places=3)
+    id_usuario: int = Field(gt=0)
+    motivo: str = Field(min_length=1, max_length=200)
+
+    @field_validator("motivo")
+    @classmethod
+    def trim_motivo(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("El motivo no puede estar vacío.")
+        return value
+
+
+def register_stock_shrinkage(conn, sku: str, request: ShrinkageRequest) -> dict:
+    """Descuenta existencias libres de reservas por merma y registra movimiento y auditoría."""
+    normalized_sku = sku.strip()
+    if not normalized_sku:
+        raise HTTPException(status_code=422, detail={
+            "code": "invalid_sku",
+            "message": "El Código I no puede estar vacío.",
+        })
+
+    with conn.transaction():
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT p.id_producto, p.nombre, u.decimales
+                   FROM producto p
+                   JOIN unidad_comercial u ON u.id_unidad = p.id_unidad
+                   WHERE p.sku = %s AND p.eliminado = FALSE
+                   FOR UPDATE OF p""",
+                (normalized_sku,),
+            )
+            product = cursor.fetchone()
+            if product is None:
+                raise HTTPException(status_code=404, detail={
+                    "code": "product_not_found",
+                    "message": f"No existe el producto con Código I '{normalized_sku}'.",
+                })
+            product_id, product_name, decimals = product
+
+            if request.cantidad.normalize().as_tuple().exponent < -decimals:
+                raise HTTPException(status_code=422, detail={
+                    "code": "quantity_precision",
+                    "message": f"La unidad comercial admite como máximo {decimals} decimales.",
+                })
+
+            cursor.execute("SELECT id_tipo FROM tipo_movimiento WHERE nombre = 'ajuste'")
+            movement_type = cursor.fetchone()
+            if movement_type is None:
+                raise HTTPException(status_code=500, detail={
+                    "code": "adjustment_movement_missing",
+                    "message": "No está configurado el tipo de movimiento 'ajuste'.",
+                })
+
+            cursor.execute(
+                """SELECT l.id_lote, l.codigo_lote, l.cantidad_fisica,
+                          COALESCE((
+                              SELECT SUM(rv.cantidad)
+                              FROM reserva rv
+                              JOIN estado_reserva er ON er.id_estado_reserva = rv.id_estado_reserva
+                              WHERE rv.id_lote = l.id_lote
+                                AND er.nombre = 'vigente'
+                                AND (rv.fecha_expiracion IS NULL OR rv.fecha_expiracion > NOW())
+                          ), 0) AS reservada
+                   FROM lote l
+                   WHERE l.id_producto = %s AND l.cantidad_fisica > 0
+                   ORDER BY
+                       CASE WHEN l.fecha_vencimiento IS NULL OR l.fecha_vencimiento >= CURRENT_DATE THEN 0 ELSE 1 END,
+                       l.fecha_vencimiento ASC NULLS LAST,
+                       l.fecha_recepcion ASC,
+                       l.id_lote ASC
+                   FOR UPDATE OF l""",
+                (product_id,),
+            )
+            lots = []
+            descontable_total = Decimal("0")
+            for lot_id, _lot_code, physical, reserved in cursor.fetchall():
+                descontable = max(Decimal(physical) - Decimal(reserved), Decimal("0"))
+                if descontable > 0:
+                    lots.append({"id_lote": lot_id, "descontable": descontable})
+                    descontable_total += descontable
+
+            if descontable_total < request.cantidad:
+                raise HTTPException(status_code=409, detail={
+                    "code": "insufficient_stock",
+                    "message": (
+                        f"No hay suficiente stock libre de reservas para descontar la merma. "
+                        f"Disponible: {descontable_total}; merma indicada: {request.cantidad}."
+                    ),
+                })
+
+            audit_record = _record_catalog_audit(
+                cursor,
+                product_id=product_id,
+                sku=normalized_sku,
+                product_name=product_name,
+                action="merma",
+                audit=CatalogAuditRequest(id_usuario=request.id_usuario, motivo=request.motivo),
+            )
+
+            movement_reason = (
+                request.motivo if request.motivo.lower().startswith("merma") else f"Merma: {request.motivo}"
+            )[:200]
+
+            remaining = request.cantidad
+            affected_lots = 0
+            for lot in lots:
+                if remaining <= 0:
+                    break
+                qty = min(remaining, lot["descontable"])
+                cursor.execute(
+                    "UPDATE lote SET cantidad_fisica = cantidad_fisica - %s WHERE id_lote = %s",
+                    (qty, lot["id_lote"]),
+                )
+                cursor.execute(
+                    """INSERT INTO movimiento_inventario
+                           (id_lote, id_tipo, id_usuario, cantidad, motivo)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (lot["id_lote"], movement_type[0], request.id_usuario, -qty, movement_reason),
+                )
+                remaining -= qty
+                affected_lots += 1
+
+            cursor.execute(
+                "SELECT COALESCE(SUM(cantidad_fisica), 0) FROM lote WHERE id_producto = %s",
+                (product_id,),
+            )
+            physical_stock = cursor.fetchone()[0]
+
+    return {
+        "status": "shrinkage_recorded",
+        "sku": normalized_sku,
+        "nombre": product_name,
+        "cantidad_merma": request.cantidad,
+        "stock_fisico": physical_stock,
+        "lotes_afectados": affected_lots,
+        "auditoria": audit_record,
     }
 
 

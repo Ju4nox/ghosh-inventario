@@ -1,0 +1,61 @@
+{
+  "id": "/",
+  "name": "GHOSH · Inventario, Pedidos y Ventas",
+  "short_name": "GHOSH",
+  "description": "Sistema móvil y escritorio para catálogo, reservas FEFO, pedidos y emisión de notas de venta.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "lang": "es-CL",
+  "icons": [
+    {
+      "src": "icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Nueva Nota de Venta",
+      "short_name": "Venta",
+      "url": "/ventas"
+    },
+    {
+      "name": "Catálogo y Stock",
+      "short_name": "Catálogo",
+      "url": "/catalogo"
+    },
+    {
+      "name": "Pedidos y Despacho",
+      "short_name": "Pedidos",
+      "url": "/pedidos"
+    },
+    {
+      "name": "Demanda y Alertas",
+      "short_name": "Alertas",
+      "url": "/demanda"
+    }
+  ]
+}

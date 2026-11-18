@@ -1,6 +1,8 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
+import { firstValueFrom } from 'rxjs';
 import {
   AlertTriangle,
   Archive,
@@ -13,6 +15,7 @@ import {
   EyeOff,
   LayoutGrid,
   LucideAngularModule,
+  MinusCircle,
   Package,
   RefreshCw,
   RotateCcw,
@@ -24,7 +27,13 @@ import {
 import { ConfirmModalService } from '../../core/confirm-modal.service';
 import { formatMoney, formatQuantity, formatWeight } from '../../core/formatters';
 import { GhoshApiService } from '../../core/ghosh-api.service';
-import { CatalogProduct } from '../../core/models';
+import {
+  CatalogProduct,
+  InventoryAlertsSummary,
+  ProductAuditPayload,
+  ProductShrinkagePayload,
+  UserOption,
+} from '../../core/models';
 
 const PAGE_SIZE = 20;
 
@@ -34,10 +43,29 @@ interface ActionFeedback {
   message: string;
 }
 
+interface AuditDialogResult {
+  id_usuario: number;
+  motivo: string;
+  cantidad?: string;
+}
+
+interface AuditDialogState {
+  mode: 'retiro' | 'eliminacion' | 'merma';
+  title: string;
+  subtitle: string;
+  highlight?: string;
+  confirmLabel: string;
+  actors: UserOption[];
+  availableStock: number;
+  maxReasonLength: number;
+  decimals: number;
+  resolve: (value: AuditDialogResult | null) => void;
+}
+
 @Component({
   selector: 'app-catalog-page',
   standalone: true,
-  imports: [CommonModule, FormsModule, LucideAngularModule],
+  imports: [CommonModule, FormsModule, RouterLink, LucideAngularModule],
   template: `
     <section class="space-y-8 animate-fade-up">
       <!-- Encabezado de página -->
@@ -97,7 +125,7 @@ interface ActionFeedback {
 
         <article class="glass-card p-5 sm:col-span-2 lg:col-span-1">
           <div class="flex items-center justify-between gap-4">
-            <span class="text-[12px] font-medium text-[#a1a1aa]">Alerta de stock en página</span>
+            <span class="text-[12px] font-medium text-[#a1a1aa]">Alertas de stock y lotes</span>
             <lucide-icon
               [img]="icons.AlertTriangle"
               [size]="16"
@@ -106,14 +134,23 @@ interface ActionFeedback {
             ></lucide-icon>
           </div>
           <div class="mt-2 text-[24px] font-semibold text-[#fafafa] tabular-nums">
-            {{ lowStockCount() }}
+            {{
+              alertSummary()
+                ? (alertSummary()!.total_alertas_stock + alertSummary()!.total_alertas_lotes)
+                : lowStockCount()
+            }}
           </div>
           <p class="mt-1 text-[12px] text-[#a1a1aa]">
-            {{
-              lowStockCount() > 0
-                ? 'Artículos con menos de 10 unidades'
-                : 'Stock saludable en esta página'
-            }}
+            @if (alertSummary(); as alerts) {
+              {{ alerts.total_alertas_stock }} stock crítico · {{ alerts.total_alertas_lotes }} lotes por vencer/vencidos ·
+              <a routerLink="/demanda" class="text-[#fafafa] underline hover:text-[#d4d4d8]">Ver alertas</a>
+            } @else {
+              {{
+                lowStockCount() > 0
+                  ? 'Artículos con menos de 10 unidades en página'
+                  : 'Stock saludable en esta página'
+              }}
+            }
           </p>
         </article>
       </div>
@@ -264,8 +301,8 @@ interface ActionFeedback {
             No encontramos productos con esos filtros.
           </div>
         } @else {
-          <!-- Vista de Tabla para Escritorio (md+) -->
-          <div class="hidden md:block overflow-x-auto scroll-area">
+          <!-- Vista de Tabla para Escritorio (lg+) -->
+          <div class="desktop-only-view overflow-x-auto scroll-area">
             <table class="data-table min-w-[1100px]">
               <thead>
                 <tr>
@@ -324,6 +361,22 @@ interface ActionFeedback {
                         <button
                           type="button"
                           class="btn btn-sm btn-ghost"
+                          [disabled]="Number(product.disponible ?? 0) <= 0"
+                          [attr.aria-label]="'Registrar merma de ' + product.nombre"
+                          title="Descontar unidades por merma o pérdida"
+                          (click)="onRegisterShrinkage(product)"
+                        >
+                          <lucide-icon
+                            [img]="icons.MinusCircle"
+                            [size]="14"
+                            [strokeWidth]="1.5"
+                          ></lucide-icon>
+                          <span>Merma</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-ghost"
                           [attr.aria-label]="
                             (product.activo ? 'Retirar ' : 'Reactivar ') + product.nombre
                           "
@@ -360,8 +413,8 @@ interface ActionFeedback {
             </table>
           </div>
 
-          <!-- Vista de Tarjetas Apiladas para Móvil (< md) -->
-          <div class="grid md:hidden gap-3 p-4">
+          <!-- Vista de Tarjetas Táctiles para Redmi Pad SE 11" Vertical / Móvil -->
+          <div class="tablet-only-view grid-cols-1 sm:grid-cols-2 gap-3.5 p-4">
             @for (product of items(); track product.sku) {
               <article
                 class="glass-subtle p-4 space-y-3"
@@ -426,6 +479,20 @@ interface ActionFeedback {
                   <button
                     type="button"
                     class="btn btn-sm btn-ghost flex-1"
+                    [disabled]="Number(product.disponible ?? 0) <= 0"
+                    (click)="onRegisterShrinkage(product)"
+                  >
+                    <lucide-icon
+                      [img]="icons.MinusCircle"
+                      [size]="15"
+                      [strokeWidth]="1.5"
+                    ></lucide-icon>
+                    <span>Merma</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost flex-1"
                     (click)="onToggleProductStatus(product)"
                   >
                     <lucide-icon
@@ -486,12 +553,136 @@ interface ActionFeedback {
         </div>
       </section>
     </section>
+
+    <!-- Modal auditable para Retiro / Eliminación / Merma -->
+    @if (auditDialog(); as dialog) {
+      <div
+        class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 animate-fade-in"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="audit-dialog-title"
+        (click)="closeAuditDialog()"
+      >
+        <div
+          class="w-full max-w-md p-6 bg-[#111111] border border-[#262626] rounded-[10px] animate-modal-in relative"
+          (click)="$event.stopPropagation()"
+        >
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm btn-icon absolute top-4 right-4 text-[#a1a1aa] hover:text-[#fafafa]"
+            aria-label="Cerrar diálogo"
+            (click)="closeAuditDialog()"
+          >
+            <lucide-icon [img]="icons.X" [size]="16" [strokeWidth]="1.5"></lucide-icon>
+          </button>
+
+          <h3 id="audit-dialog-title" class="text-[15px] font-semibold text-[#fafafa] pr-6">
+            {{ dialog.title }}
+          </h3>
+          <p class="mt-1.5 text-[13px] text-[#a1a1aa]">
+            {{ dialog.subtitle }}
+          </p>
+
+          @if (dialog.highlight) {
+            <div
+              class="mt-3 p-3 rounded-[6px] text-[12px] font-medium bg-[#0a0a0a] border border-[#262626] text-[#fafafa]"
+            >
+              {{ dialog.highlight }}
+            </div>
+          }
+
+          <form class="mt-5 space-y-4" (ngSubmit)="submitAuditDialog()">
+            <label class="block">
+              <span class="field-label">Responsable</span>
+              <select
+                id="audit-dialog-user"
+                name="auditUser"
+                class="glass-input"
+                [(ngModel)]="auditUserId"
+                required
+              >
+                <option value="">Selecciona un responsable</option>
+                @for (actor of dialog.actors; track actor.id_usuario) {
+                  <option [value]="String(actor.id_usuario)">{{ actor.nombre }}</option>
+                }
+              </select>
+            </label>
+
+            @if (dialog.mode === 'merma') {
+              <label class="block">
+                <span class="field-label">
+                  Cantidad a descontar
+                  <span class="text-[#a1a1aa] font-normal">
+                    (disponible: {{ formatQuantity(dialog.availableStock) }})
+                  </span>
+                </span>
+                <input
+                  id="audit-dialog-quantity"
+                  name="auditQuantity"
+                  type="number"
+                  [min]="dialog.decimals > 0 ? '0.001' : '1'"
+                  [step]="dialog.decimals > 0 ? '0.001' : '1'"
+                  [max]="dialog.availableStock"
+                  [(ngModel)]="auditQuantity"
+                  placeholder="Ej. 2"
+                  required
+                  class="glass-input tabular-nums"
+                />
+              </label>
+            }
+
+            <label class="block">
+              <span class="field-label">
+                Motivo
+                <span class="text-[#a1a1aa] font-normal">
+                  (obligatorio, máx. {{ dialog.maxReasonLength }} caracteres)
+                </span>
+              </span>
+              <textarea
+                id="audit-dialog-reason"
+                name="auditReason"
+                rows="3"
+                [maxlength]="dialog.maxReasonLength"
+                [(ngModel)]="auditReason"
+                [placeholder]="
+                  dialog.mode === 'merma'
+                    ? 'Ej. Envases dañados / producto vencido / rotura en bodega'
+                    : 'Indica el motivo de la acción'
+                "
+                required
+                class="glass-input resize-none"
+              ></textarea>
+            </label>
+
+            @if (auditDialogError()) {
+              <div
+                role="alert"
+                class="p-3 rounded-[6px] bg-[#0a0a0a] border border-[#262626] text-[12px] text-[#fafafa]"
+              >
+                {{ auditDialogError() }}
+              </div>
+            }
+
+            <div class="pt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+              <button type="button" class="btn btn-ghost" (click)="closeAuditDialog()">
+                Cancelar
+              </button>
+              <button type="submit" class="btn btn-primary">
+                {{ dialog.confirmLabel }}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    }
   `,
 })
 export class CatalogPageComponent implements OnInit {
   private readonly api = inject(GhoshApiService);
   private readonly confirmModal = inject(ConfirmModalService);
 
+  readonly Number = Number;
+  readonly String = String;
   readonly pageSize = PAGE_SIZE;
   readonly formatMoney = formatMoney;
   readonly formatQuantity = formatQuantity;
@@ -509,6 +700,7 @@ export class CatalogPageComponent implements OnInit {
     EyeOff,
     RefreshCw,
     Archive,
+    MinusCircle,
     RotateCcw,
     Trash2,
     ChevronLeft,
@@ -517,6 +709,9 @@ export class CatalogPageComponent implements OnInit {
   };
 
   queryInput = '';
+  auditUserId = '';
+  auditQuantity = '';
+  auditReason = '';
   readonly items = signal<CatalogProduct[]>([]);
   readonly total = signal(0);
   readonly offset = signal(0);
@@ -524,8 +719,11 @@ export class CatalogPageComponent implements OnInit {
   readonly loading = signal(false);
   readonly purging = signal(false);
   readonly loaded = signal(false);
+  readonly alertSummary = signal<InventoryAlertsSummary | null>(null);
   readonly errorMessage = signal<string | null>(null);
   readonly feedback = signal<ActionFeedback | null>(null);
+  readonly auditDialog = signal<AuditDialogState | null>(null);
+  readonly auditDialogError = signal<string | null>(null);
 
   readonly lowStockCount = computed(
     () => this.items().filter((item) => this.isLowStock(item)).length,
@@ -559,6 +757,11 @@ export class CatalogPageComponent implements OnInit {
   loadCatalog(): void {
     this.loading.set(true);
     this.errorMessage.set(null);
+
+    this.api.getInventoryAlerts({ dias_vencimiento: 30, umbral_stock: 10 }).subscribe({
+      next: (res) => this.alertSummary.set(res.summary),
+      error: () => this.alertSummary.set(null),
+    });
 
     this.api
       .getCatalogProducts({
@@ -665,25 +868,23 @@ export class CatalogPageComponent implements OnInit {
 
   async onToggleProductStatus(product: CatalogProduct): Promise<void> {
     const targetActive = !product.activo;
-    const actionVerb = targetActive ? 'reactivar' : 'retirar';
-    const available = Number(product.disponible ?? 0);
+    let audit: ProductAuditPayload | undefined;
 
-    const confirmed = await this.confirmModal.confirm({
-      title: `${targetActive ? 'Reactivar' : 'Retirar'} «${product.nombre}»`,
-      message: targetActive
-        ? `¿Quieres reactivar «${product.nombre}» en el catálogo? Volverá a estar disponible para ventas y recepciones.`
-        : `¿Quieres ${actionVerb} «${product.nombre}» del catálogo? Dejará de aparecer para nuevas ventas y recepciones; sus movimientos y stock se conservarán.`,
-      highlight:
-        !targetActive && available > 0
-          ? `Stock disponible actual: ${formatQuantity(available)} unidades.`
-          : undefined,
-      confirmLabel: targetActive ? 'Sí, reactivar' : 'Sí, retirar artículo',
-      tone: targetActive ? 'emerald' : 'warning',
-    });
+    if (targetActive) {
+      const confirmed = await this.confirmModal.confirm({
+        title: `Reactivar «${product.nombre}»`,
+        message: `¿Quieres reactivar «${product.nombre}» en el catálogo? Volverá a estar disponible para ventas y recepciones.`,
+        confirmLabel: 'Sí, reactivar',
+        tone: 'emerald',
+      });
+      if (!confirmed) return;
+    } else {
+      const details = await this.collectAuditDetails('retiro', product);
+      if (!details) return;
+      audit = details;
+    }
 
-    if (!confirmed) return;
-
-    this.api.updateProductStatus(product.sku, targetActive).subscribe({
+    this.api.updateProductStatus(product.sku, targetActive, audit).subscribe({
       next: (data) => {
         const physical = Number(data.stock_fisico ?? 0);
         const stockMessage =
@@ -699,7 +900,7 @@ export class CatalogPageComponent implements OnInit {
               targetActive
                 ? 'está disponible'
                 : 'no aparecerá para nuevas ventas ni recepciones'
-            }.` + stockMessage,
+            }.` + stockMessage + (data.auditoria ? ` Auditoría: ${data.auditoria.usuario}; motivo: ${data.auditoria.motivo}.` : ''),
         });
         this.offset.set(0);
         this.loadCatalog();
@@ -718,22 +919,10 @@ export class CatalogPageComponent implements OnInit {
   }
 
   async onDeleteProduct(product: CatalogProduct): Promise<void> {
-    const available = Number(product.disponible ?? 0);
+    const audit = await this.collectAuditDetails('eliminacion', product);
+    if (!audit) return;
 
-    const confirmed = await this.confirmModal.confirm({
-      title: `Eliminar «${product.nombre}» del catálogo`,
-      message: `¿Eliminar definitivamente «${product.nombre}» del catálogo? Sus códigos I/B quedarán disponibles para otros productos. Sus lotes y movimientos históricos se conservarán.`,
-      highlight:
-        available > 0
-          ? `Aún registra ${formatQuantity(available)} unidades disponibles; permanecerán en el historial y no podrán venderse desde este artículo eliminado.`
-          : undefined,
-      confirmLabel: 'Eliminar del catálogo',
-      tone: 'danger',
-    });
-
-    if (!confirmed) return;
-
-    this.api.deleteProduct(product.sku).subscribe({
+    this.api.deleteProduct(product.sku, audit).subscribe({
       next: (data) => {
         const remaining = Number(data.stock_fisico_conservado ?? 0);
         const stockMessage =
@@ -746,7 +935,10 @@ export class CatalogPageComponent implements OnInit {
           title: 'Artículo eliminado del catálogo',
           message:
             `${product.nombre} ya no aparecerá en el catálogo. Sus códigos quedaron liberados.` +
-            stockMessage,
+            stockMessage +
+            (data.auditoria
+              ? ` Auditoría: ${data.auditoria.usuario}; motivo: ${data.auditoria.motivo}.`
+              : ''),
         });
         this.offset.set(0);
         this.loadCatalog();
@@ -762,5 +954,199 @@ export class CatalogPageComponent implements OnInit {
         });
       },
     });
+  }
+
+  async onRegisterShrinkage(product: CatalogProduct): Promise<void> {
+    const available = Number(product.disponible ?? 0);
+    if (available <= 0) {
+      this.feedback.set({
+        success: false,
+        title: 'Sin stock disponible para merma',
+        message: `«${product.nombre}» no registra unidades disponibles libres de reservas.`,
+      });
+      return;
+    }
+
+    const actors = await this.loadAuditActors();
+    if (!actors) return;
+
+    const result = await this.openAuditDialog({
+      mode: 'merma',
+      title: `Registrar merma de «${product.nombre}»`,
+      subtitle: `SKU ${product.sku} · Se descontará por orden FEFO de los lotes disponibles.`,
+      confirmLabel: 'Registrar merma',
+      actors,
+      availableStock: available,
+      maxReasonLength: 200,
+      decimals: Number(product.decimales ?? 0),
+    });
+
+    if (!result || !result.cantidad) return;
+
+    const payload: ProductShrinkagePayload = {
+      cantidad: result.cantidad,
+      id_usuario: result.id_usuario,
+      motivo: result.motivo,
+    };
+
+    this.api.registerProductShrinkage(product.sku, payload).subscribe({
+      next: (data) => {
+        this.feedback.set({
+          success: true,
+          title: 'Merma de stock registrada',
+          message:
+            `Se descontaron ${formatQuantity(data.cantidad_merma)} unidades de «${product.nombre}» ` +
+            `(${data.lotes_afectados} lote(s)). Stock físico restante: ${formatQuantity(data.stock_fisico)}. ` +
+            `Auditoría: ${data.auditoria.usuario}; motivo: ${data.auditoria.motivo}.`,
+        });
+        this.loadCatalog();
+      },
+      error: (err) => {
+        this.feedback.set({
+          success: false,
+          title: 'No se pudo registrar la merma',
+          message: this.api.extractErrorMessage(
+            err,
+            'No se pudo registrar la merma de stock.',
+          ),
+        });
+      },
+    });
+  }
+
+  private async loadAuditActors(): Promise<UserOption[] | null> {
+    let actors: UserOption[];
+    try {
+      actors = (await firstValueFrom(this.api.getCatalogAuditOptions())).usuarios ?? [];
+    } catch (err) {
+      this.feedback.set({
+        success: false,
+        title: 'No se pudo cargar responsables',
+        message: this.api.extractErrorMessage(err, 'No se pudo consultar los usuarios activos.'),
+      });
+      return null;
+    }
+
+    if (!actors.length) {
+      this.feedback.set({
+        success: false,
+        title: 'No hay responsable disponible',
+        message: 'Crea o habilita un usuario antes de registrar una acción auditable.',
+      });
+      return null;
+    }
+    return actors;
+  }
+
+  private async collectAuditDetails(
+    mode: 'retiro' | 'eliminacion',
+    product: CatalogProduct,
+  ): Promise<ProductAuditPayload | null> {
+    const actors = await this.loadAuditActors();
+    if (!actors) return null;
+
+    const available = Number(product.disponible ?? 0);
+    const result = await this.openAuditDialog({
+      mode,
+      title:
+        mode === 'retiro'
+          ? `Retirar «${product.nombre}» del catálogo`
+          : `Eliminar «${product.nombre}» del catálogo`,
+      subtitle:
+        mode === 'retiro'
+          ? 'Dejará de aparecer para nuevas ventas y recepciones; sus movimientos y stock se conservarán.'
+          : 'Sus códigos I/B quedarán disponibles para otros productos. Sus lotes y movimientos históricos se conservarán.',
+      highlight:
+        mode === 'retiro'
+          ? available > 0
+            ? `Stock disponible actual: ${formatQuantity(available)} unidades.`
+            : undefined
+          : available > 0
+            ? `Aún registra ${formatQuantity(available)} unidades disponibles; permanecerán en el historial y no podrán venderse desde este artículo eliminado.`
+            : undefined,
+      confirmLabel: mode === 'retiro' ? 'Sí, retirar artículo' : 'Eliminar del catálogo',
+      actors,
+      availableStock: available,
+      maxReasonLength: 300,
+      decimals: Number(product.decimales ?? 0),
+    });
+
+    if (!result) return null;
+    return { id_usuario: result.id_usuario, motivo: result.motivo };
+  }
+
+  private openAuditDialog(
+    options: Omit<AuditDialogState, 'resolve'>,
+  ): Promise<AuditDialogResult | null> {
+    const current = this.auditDialog();
+    if (current) {
+      current.resolve(null);
+    }
+
+    this.auditUserId =
+      options.actors.length === 1 ? String(options.actors[0].id_usuario) : '';
+    this.auditQuantity = '';
+    this.auditReason = '';
+    this.auditDialogError.set(null);
+
+    return new Promise<AuditDialogResult | null>((resolve) => {
+      this.auditDialog.set({ ...options, resolve });
+    });
+  }
+
+  submitAuditDialog(): void {
+    const dialog = this.auditDialog();
+    if (!dialog) return;
+
+    const id_usuario = Number(this.auditUserId);
+    const actor = dialog.actors.find((item) => item.id_usuario === id_usuario);
+    if (!actor) {
+      this.auditDialogError.set('Selecciona un responsable válido.');
+      return;
+    }
+
+    let cantidad: string | undefined;
+    if (dialog.mode === 'merma') {
+      const parsedQty = Number(this.auditQuantity);
+      if (!Number.isFinite(parsedQty) || parsedQty <= 0) {
+        this.auditDialogError.set('Ingresa una cantidad de merma mayor que cero.');
+        return;
+      }
+      if (parsedQty > dialog.availableStock) {
+        this.auditDialogError.set(
+          `La merma no puede superar el stock disponible (${formatQuantity(dialog.availableStock)}).`,
+        );
+        return;
+      }
+      if (dialog.decimals === 0 && !Number.isInteger(parsedQty)) {
+        this.auditDialogError.set('Este producto admite solo cantidades enteras.');
+        return;
+      }
+      cantidad = String(this.auditQuantity).trim();
+    }
+
+    const motivo = this.auditReason.trim();
+    if (!motivo) {
+      this.auditDialogError.set('Ingresa el motivo obligatorio.');
+      return;
+    }
+    if (motivo.length > dialog.maxReasonLength) {
+      this.auditDialogError.set(
+        `El motivo puede tener hasta ${dialog.maxReasonLength} caracteres.`,
+      );
+      return;
+    }
+
+    this.auditDialog.set(null);
+    this.auditDialogError.set(null);
+    dialog.resolve({ id_usuario, motivo, cantidad });
+  }
+
+  closeAuditDialog(): void {
+    const dialog = this.auditDialog();
+    if (!dialog) return;
+    this.auditDialog.set(null);
+    this.auditDialogError.set(null);
+    dialog.resolve(null);
   }
 }

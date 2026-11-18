@@ -16,3 +16,7 @@ frontend/.angular/
 .vscode/
 .idea/
 .DS_Store
+
+# Documentos de informe y temporales de Word
+*.docx
+~$*

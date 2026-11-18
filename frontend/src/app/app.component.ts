@@ -10,9 +10,12 @@ import {
   RouterOutlet,
 } from '@angular/router';
 import {
+  AlertTriangle,
   ArrowUpDown,
   Check,
   ChevronDown,
+  ClipboardList,
+  FileSpreadsheet,
   LayoutGrid,
   Lock,
   LogOut,
@@ -31,6 +34,11 @@ import { filter } from 'rxjs';
 import { AuthService } from './core/auth.service';
 import { GhoshApiService } from './core/ghosh-api.service';
 import { GlassConfirmModalComponent } from './shared/glass-confirm-modal.component';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 @Component({
   selector: 'app-root',
@@ -129,24 +137,94 @@ import { GlassConfirmModalComponent } from './shared/glass-confirm-modal.compone
         </div>
       </div>
     } @else {
-      <!-- ==================== SHELL PRINCIPAL (Linear / Vercel / shadcn) ==================== -->
-      <div class="min-h-dvh bg-[#0a0a0a] text-[#fafafa] flex">
-        <!-- Overlay del Drawer en Móvil (< md) -->
+      <!-- ==================== SHELL PRINCIPAL (Desktop + Redmi Pad SE 11" Vertical + Simulador PC) ==================== -->
+      <div
+        [class.min-h-dvh]="true"
+        [class.bg-[#050505]]="tabletSimMode()"
+        [class.bg-[#0a0a0a]]="!tabletSimMode()"
+        [class.p-3]="tabletSimMode()"
+        [class.sm:p-6]="tabletSimMode()"
+        [class.tablet-sim-active]="tabletSimMode()"
+        [class.tablet-sim-portrait]="tabletSimMode() && tabletOrientation() === 'portrait'"
+      >
+        @if (tabletSimMode()) {
+          <div class="max-w-[1024px] mx-auto mb-4 px-4 py-2.5 rounded-[10px] border border-[#262626] bg-[#111111] flex flex-wrap items-center justify-between gap-3">
+            <div class="flex flex-wrap items-center gap-2.5 text-[12px]">
+              <span class="badge badge-emerald">Simulador Tablet</span>
+              <strong class="text-[#fafafa]">Xiaomi Redmi Pad SE 11" (16:10)</strong>
+              <span class="text-[#a1a1aa]">
+                {{
+                  tabletOrientation() === 'portrait'
+                    ? 'Vertical · 1200 × 1920 px físicos FHD+ (750 × 1200 px CSS)'
+                    : 'Horizontal · 1920 × 1200 px físicos FHD+ (1024 × 640 px CSS)'
+                }}
+              </span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              @if (pwaInstallPrompt()) {
+                <button
+                  id="pwa-install-btn"
+                  type="button"
+                  class="btn btn-sm btn-primary"
+                  (click)="installPwa()"
+                >
+                  Instalar App (PWA)
+                </button>
+              }
+              <button
+                type="button"
+                class="btn btn-sm"
+                [ngClass]="tabletOrientation() === 'portrait' ? 'btn-primary' : 'btn-ghost'"
+                (click)="tabletOrientation.set('portrait')"
+              >
+                Vertical (Portrait)
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm"
+                [ngClass]="tabletOrientation() === 'landscape' ? 'btn-primary' : 'btn-ghost'"
+                (click)="tabletOrientation.set('landscape')"
+              >
+                Horizontal
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-ghost"
+                (click)="toggleTabletSimMode()"
+              >
+                Volver a escritorio
+              </button>
+            </div>
+          </div>
+        }
+
+        <div
+          [ngClass]="
+            tabletSimMode()
+              ? (tabletOrientation() === 'portrait'
+                  ? 'tablet-sim-frame tablet-bezel-portrait text-[#fafafa] flex relative'
+                  : 'tablet-sim-frame tablet-bezel-landscape text-[#fafafa] flex relative')
+              : 'min-h-dvh bg-[#0a0a0a] text-[#fafafa] flex relative'
+          "
+        >
+        <!-- Overlay del Drawer en Tablet / Móvil (< lg o dentro del simulador) -->
         @if (mobileDrawerOpen()) {
           <div
-            class="fixed inset-0 z-40 bg-black/75 md:hidden animate-fade-in"
+            class="z-40 bg-black/75 animate-fade-in"
+            [ngClass]="tabletSimMode() ? 'absolute inset-0' : 'fixed inset-0 lg:hidden'"
             (click)="mobileDrawerOpen.set(false)"
             aria-hidden="true"
           ></div>
         }
 
-        <!-- SIDEBAR IZQUIERDO (~240px fijo, altura completa, línea blanca fina a la derecha) -->
-        @if (!sidebarCollapsed() || mobileDrawerOpen()) {
+        <!-- SIDEBAR IZQUIERDO (~240px en escritorio >= 1024px; slide-over táctil dentro de la pantalla tablet) -->
+        @if (mobileDrawerOpen() || (!tabletSimMode() && !sidebarCollapsed())) {
           <aside
-            class="w-[240px] shrink-0 h-dvh bg-[#0a0a0a] border-r border-white/85 flex flex-col select-none z-50"
+            class="w-[240px] shrink-0 bg-[#0a0a0a] border-r border-white/85 flex flex-col select-none z-50"
             [ngClass]="{
-              'fixed inset-y-0 left-0 md:sticky md:top-0': mobileDrawerOpen(),
-              'hidden md:flex md:sticky md:top-0': !mobileDrawerOpen()
+              'absolute inset-y-0 left-0 h-full': mobileDrawerOpen() && tabletSimMode(),
+              'fixed inset-y-0 left-0 h-dvh': mobileDrawerOpen() && !tabletSimMode(),
+              'hidden lg:flex lg:sticky lg:top-0 h-dvh': !mobileDrawerOpen() && !tabletSimMode()
             }"
           >
             <!-- Cabecera del Sidebar: Selector de Workspace + Botón colapsar -->
@@ -230,11 +308,17 @@ import { GlassConfirmModalComponent } from './shared/glass-confirm-modal.compone
           </aside>
         }
 
-        <!-- COLUMNA DERECHA: Header Superior + Contenido Principal -->
-        <div class="flex-1 flex flex-col min-w-0">
-          <!-- HEADER SUPERIOR (borde inferior muy sutil #1f1f1f) -->
+        <!-- COLUMNA DERECHA: Header Superior + Contenido Desplazable + Barra Táctil Fija -->
+        <div
+          [ngClass]="
+            tabletSimMode()
+              ? 'flex-1 flex flex-col min-w-0 h-full overflow-hidden'
+              : 'flex-1 flex flex-col min-w-0'
+          "
+        >
+          <!-- HEADER SUPERIOR (fijo arriba) -->
           <header
-            class="sticky top-0 z-30 h-14 px-4 sm:px-8 flex items-center justify-between bg-[#0a0a0a]/90 backdrop-blur-md border-b border-[#1f1f1f]"
+            class="sticky top-0 z-30 h-14 px-4 sm:px-8 flex items-center justify-between bg-[#0a0a0a]/90 backdrop-blur-md border-b border-[#1f1f1f] shrink-0"
           >
             <div class="flex items-center gap-2 relative">
               <!-- Botón para abrir/colapsar el Sidebar -->
@@ -297,8 +381,21 @@ import { GlassConfirmModalComponent } from './shared/glass-confirm-modal.compone
               }
             </div>
 
-            <!-- Estado de la API y usuario activo -->
-            <div class="flex items-center gap-3">
+            <!-- Estado de la API, simulador Redmi Pad SE y usuario activo -->
+            <div class="flex items-center gap-2 sm:gap-3">
+              <button
+                id="tablet-sim-toggle"
+                type="button"
+                (click)="toggleTabletSimMode()"
+                title="Previsualizar interfaz táctil de Xiaomi Redmi Pad SE 11 pulgadas en el PC"
+                class="btn btn-sm"
+                [ngClass]="tabletSimMode() ? 'btn-primary' : 'btn-ghost'"
+              >
+                <lucide-icon [img]="icons.LayoutGrid" [size]="14" [strokeWidth]="1.5"></lucide-icon>
+                <span class="hidden sm:inline">{{ tabletSimMode() ? 'Salir Vista Tablet' : 'Vista Redmi Pad SE' }}</span>
+                <span class="sm:hidden">Tablet</span>
+              </button>
+
               <button
                 type="button"
                 id="api-status"
@@ -334,18 +431,57 @@ import { GlassConfirmModalComponent } from './shared/glass-confirm-modal.compone
             </div>
           </header>
 
-          <!-- CONTENIDO PRINCIPAL (Padding generoso 32px en escritorio, mucho espacio vacío) -->
-          <main class="flex-1 w-full max-w-[1440px] mx-auto p-5 sm:p-8">
-            <router-outlet />
-          </main>
-
-          <!-- Pie de página minimalista -->
-          <footer
-            class="w-full max-w-[1440px] mx-auto px-5 sm:px-8 py-6 border-t border-[#1f1f1f] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[12px] text-[#a1a1aa]"
+          <!-- ÁREA DESPLAZABLE (en modo simulador scrollea por dentro manteniendo cabecera y barra inferior siempre visibles) -->
+          <div
+            #contentScroller
+            [ngClass]="
+              tabletSimMode()
+                ? 'flex-1 overflow-y-auto overflow-x-hidden scroll-area flex flex-col'
+                : 'flex-1 flex flex-col'
+            "
           >
-            <span>GHOSH · Sistema de inventario, pedidos y notas de venta</span>
-            <span>Bodega Central Talca · America/Santiago</span>
-          </footer>
+            <main
+              class="flex-1 w-full max-w-[1440px] mx-auto p-5 sm:p-8"
+              [ngClass]="tabletSimMode() ? 'pb-8' : 'pb-24 lg:pb-8'"
+            >
+              <router-outlet />
+            </main>
+
+            <!-- Pie de página minimalista -->
+            <footer
+              class="w-full max-w-[1440px] mx-auto px-5 sm:px-8 py-6 border-t border-[#1f1f1f] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[12px] text-[#a1a1aa]"
+            >
+              <span>GHOSH · Sistema de inventario, pedidos y notas de venta</span>
+              <span>Bodega Central Talca · America/Santiago</span>
+            </footer>
+          </div>
+
+          <!-- Barra de navegación táctil inferior fija en todo momento del scroll -->
+          <nav
+            aria-label="Navegación táctil rápida"
+            class="tablet-bottom-bar grid-cols-5 border-t border-[#262626] bg-[#0a0a0a]/95 backdrop-blur-md px-1 py-1.5 shrink-0"
+          >
+            @for (item of quickTabletNavItems; track item.path) {
+              <a
+                [routerLink]="item.path"
+                routerLinkActive="!text-[#fafafa] bg-[#1f1f1f]"
+                (click)="contentScroller.scrollTop = 0; mobileDrawerOpen.set(false)"
+                class="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-[8px] px-1 py-1 text-[11px] font-medium text-[#a1a1aa] hover:text-[#fafafa] no-underline transition-colors"
+              >
+                <lucide-icon [img]="item.icon" [size]="17" [strokeWidth]="1.5"></lucide-icon>
+                <span class="truncate max-w-full">{{ item.shortLabel }}</span>
+              </a>
+            }
+            <button
+              type="button"
+              (click)="mobileDrawerOpen.set(true)"
+              class="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-[8px] px-1 py-1 text-[11px] font-medium text-[#a1a1aa] hover:text-[#fafafa] transition-colors"
+            >
+              <lucide-icon [img]="icons.PanelLeft" [size]="17" [strokeWidth]="1.5"></lucide-icon>
+              <span>Menú</span>
+            </button>
+          </nav>
+        </div>
         </div>
       </div>
 
@@ -433,6 +569,16 @@ import { GlassConfirmModalComponent } from './shared/glass-confirm-modal.compone
                   <span class="text-[#a1a1aa]">Política de descuento de lotes</span>
                   <strong class="text-[#fafafa] font-medium">FEFO (First Expired, First Out)</strong>
                 </div>
+                <div class="p-3 rounded-[8px] bg-[#0a0a0a] border border-[#262626] flex items-center justify-between gap-3">
+                  <span class="text-[#a1a1aa]">Modo aplicación móvil (PWA)</span>
+                  @if (pwaInstallPrompt()) {
+                    <button type="button" class="btn btn-sm btn-primary" (click)="installPwa()">
+                      Instalar App
+                    </button>
+                  } @else {
+                    <strong class="text-[#fafafa] font-medium">Stand-alone listo (manifest + iconos)</strong>
+                  }
+                </div>
               </div>
             }
 
@@ -465,6 +611,9 @@ export class AppComponent implements OnInit {
   readonly mobileDrawerOpen = signal(false);
   readonly headerDropdownOpen = signal(false);
   readonly activeSecondaryModal = signal<'team' | 'settings' | null>(null);
+  readonly tabletSimMode = signal(false);
+  readonly tabletOrientation = signal<'portrait' | 'landscape'>('portrait');
+  readonly pwaInstallPrompt = signal<BeforeInstallPromptEvent | null>(null);
 
   loginUsername = '';
   loginPassword = '';
@@ -473,13 +622,25 @@ export class AppComponent implements OnInit {
   readonly navItems = [
     { path: '/catalogo', label: 'Catálogo', icon: LayoutGrid },
     { path: '/ventas', label: 'Nota de venta', icon: ReceiptText },
+    { path: '/pedidos', label: 'Pedidos', icon: ClipboardList },
+    { path: '/notas-venta', label: 'Auditoría de ventas', icon: FileSpreadsheet },
     { path: '/recepcion', label: 'Recepción', icon: PackagePlus },
     { path: '/movimientos', label: 'Movimientos', icon: ArrowUpDown },
+    { path: '/demanda', label: 'Demanda y alertas', icon: AlertTriangle },
+  ];
+
+  readonly quickTabletNavItems = [
+    { path: '/catalogo', shortLabel: 'Catálogo', icon: LayoutGrid },
+    { path: '/ventas', shortLabel: 'Venta', icon: ReceiptText },
+    { path: '/pedidos', shortLabel: 'Pedidos', icon: ClipboardList },
+    { path: '/demanda', shortLabel: 'Alertas', icon: AlertTriangle },
   ];
 
   readonly icons = {
+    AlertTriangle,
     LayoutGrid,
     ReceiptText,
+    ClipboardList,
     PackagePlus,
     ArrowUpDown,
     Users,
@@ -495,6 +656,10 @@ export class AppComponent implements OnInit {
   };
 
   ngOnInit(): void {
+    if (typeof window !== 'undefined' && window.location.search.includes('tablet=1')) {
+      this.tabletSimMode.set(true);
+    }
+
     this.api.checkHealth().subscribe();
 
     this.router.events
@@ -518,6 +683,25 @@ export class AppComponent implements OnInit {
     }
   }
 
+  @HostListener('window:beforeinstallprompt', ['$event'])
+  onBeforeInstallPrompt(event: Event): void {
+    event.preventDefault();
+    this.pwaInstallPrompt.set(event as BeforeInstallPromptEvent);
+  }
+
+  @HostListener('window:appinstalled')
+  onAppInstalled(): void {
+    this.pwaInstallPrompt.set(null);
+  }
+
+  async installPwa(): Promise<void> {
+    const promptEvent = this.pwaInstallPrompt();
+    if (!promptEvent) return;
+    await promptEvent.prompt();
+    await promptEvent.userChoice;
+    this.pwaInstallPrompt.set(null);
+  }
+
   onLoginSubmit(): void {
     this.loginError.set(null);
     const ok = this.auth.login(this.loginUsername, this.loginPassword);
@@ -536,7 +720,7 @@ export class AppComponent implements OnInit {
   }
 
   toggleSidebar(): void {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    if (this.tabletSimMode() || (typeof window !== 'undefined' && window.innerWidth < 1024)) {
       this.mobileDrawerOpen.update((v) => !v);
     } else {
       this.sidebarCollapsed.update((v) => !v);
@@ -544,11 +728,16 @@ export class AppComponent implements OnInit {
   }
 
   collapseSidebar(): void {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+    if (this.tabletSimMode() || (typeof window !== 'undefined' && window.innerWidth < 1024)) {
       this.mobileDrawerOpen.set(false);
     } else {
       this.sidebarCollapsed.set(true);
     }
+  }
+
+  toggleTabletSimMode(): void {
+    this.mobileDrawerOpen.set(false);
+    this.tabletSimMode.update((v) => !v);
   }
 
   toggleWorkspaceMenu(): void {

@@ -1,7 +1,8 @@
 -- GHOSH · Datos ficticios para desarrollo y pruebas (no usar en producción)
 
 INSERT INTO rol (nombre) VALUES ('cliente'), ('ventas'), ('bodega'), ('gerencia');
-INSERT INTO estado_pedido (nombre) VALUES ('pendiente'), ('aceptado'), ('preparado'), ('despachado'), ('cancelado'), ('expirado');
+INSERT INTO estado_pedido (nombre) VALUES ('pendiente'), ('aceptado'), ('preparado'), ('despachado'), ('entregado'), ('cancelado'), ('expirado');
+INSERT INTO correlativo (tipo_documento, ultimo_numero) VALUES ('nota_venta', 0);
 INSERT INTO estado_reserva (nombre) VALUES ('vigente'), ('consumida'), ('liberada'), ('expirada');
 INSERT INTO tipo_movimiento (nombre) VALUES ('recepcion'), ('reserva'), ('despacho'), ('cancelacion'), ('ajuste');
 INSERT INTO bodega (nombre) VALUES ('Bodega Central Talca');
@@ -14,5 +15,11 @@ INSERT INTO usuario (id_rol, nombre, correo, password_hash) VALUES
  ((SELECT id_rol FROM rol WHERE nombre='bodega'),  'Bodega Demo',   'bodega@demo.cl',   'hash_demo'),
  ((SELECT id_rol FROM rol WHERE nombre='ventas'),  'Ventas Demo',   'ventas@demo.cl',   'hash_demo'),
  ((SELECT id_rol FROM rol WHERE nombre='gerencia'),'Gerencia Demo', 'gerencia@demo.cl', 'hash_demo');
+
+-- Locales de ejemplo para el catálogo de clientes frecuentes.
+INSERT INTO cliente_frecuente (nombre_local, direccion) VALUES
+ ('Minimarket Don Pepe', 'Talca'),
+ ('Almacén La Esquina', 'Curicó'),
+ ('Botillería El Maule', 'Linares');
 
 -- El catálogo parte vacío; los productos se agregan después mediante la aplicación.
